@@ -1,0 +1,24 @@
+{
+  "name": "kemix",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n ui,app -c cyan,green \"npm run dev -w @kemix/ui\" \"npm run dev -w @kemix/desktop\"",
+    "dev:web": "concurrently -k -n server,ui -c yellow,cyan \"npm run dev -w @kemix/server\" \"npm run dev -w @kemix/ui\"",
+    "build": "npm run build -w @kemix/ui && npm run build -w @kemix/desktop",
+    "dist": "npm run build && npm run dist -w @kemix/desktop",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/core && tsc -p packages/server && tsc -p packages/ui && tsc -p apps/desktop"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

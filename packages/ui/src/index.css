@@ -1,0 +1,29 @@
+@import 'tailwindcss';
+
+@theme {
+	--font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+	--color-accent: #c6f432;
+	--color-ink: #0d0e10;
+	--color-panel: #15171a;
+	--color-line: #24272c;
+	--color-muted: #8b919a;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+body {
+	@apply bg-ink text-zinc-100 antialiased;
+	font-feature-settings: 'tnum';
+}
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-thumb {
+	background: #2a2e34;
+	border-radius: 8px;
+	border: 2px solid var(--color-ink);
+}

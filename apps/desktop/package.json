@@ -1,0 +1,49 @@
+{
+  "name": "@kemix/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/main.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "@kemix/core": "*",
+    "@kemix/server": "*",
+    "lucida": "2.0.0-54",
+    "node-taglib-sharp": "^6.0.3",
+    "youtubei.js": "^18.3.0",
+    "@fastify/static": "^10.1.8",
+    "fastify": "^5.12.8"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "app.kemix.desktop",
+    "productName": "Kemix",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../packages/ui/dist",
+        "to": "ui"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
