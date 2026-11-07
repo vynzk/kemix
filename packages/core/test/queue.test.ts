@@ -49,6 +49,9 @@ class FakeDownloader implements Downloader {
 	async accountInfo() {
 		return {}
 	}
+	async accountQuality() {
+		return { codec: 'flac' as const, lossless: true, bitDepth: 24, sampleRateHz: 96000 }
+	}
 }
 
 const sourceTracks: SourceTrack[] = [
@@ -64,14 +67,27 @@ const sourceTracks: SourceTrack[] = [
 
 class FakeSource implements SourceConnector {
 	readonly service = 'spotify' as const
+	created: { sourceId: string; name: string; trackIds: string[] }[] = []
 	async identity() {
 		return { name: 'Test', email: 'test@example.com' }
 	}
 	async listPlaylists() {
-		return [{ sourceId: 'p1', name: 'Mi Playlist: Favoritas?', trackCount: sourceTracks.length, snapshot: 'v1' }]
+		return [
+			{ sourceId: 'p1', name: 'Mi Playlist: Favoritas?', trackCount: sourceTracks.length, snapshot: 'v1' },
+			...this.created.map((p) => ({ sourceId: p.sourceId, name: p.name, trackCount: p.trackIds.length, snapshot: 'v1' }))
+		]
 	}
-	async getPlaylistTracks() {
-		return sourceTracks
+	async getPlaylistTracks(playlistId: string) {
+		const created = this.created.find((p) => p.sourceId === playlistId)
+		return created ? sourceTracks.filter((t) => created.trackIds.includes(t.sourceId)) : sourceTracks
+	}
+	async search(query: string, limit: number) {
+		return sourceTracks.filter((t) => t.title.toLowerCase().includes(query.toLowerCase())).slice(0, limit)
+	}
+	async createPlaylist(name: string, trackIds: string[]) {
+		const sourceId = `new${this.created.length + 1}`
+		this.created.push({ sourceId, name, trackIds })
+		return sourceId
 	}
 }
 
@@ -136,6 +152,50 @@ describe('library + download queue', () => {
 		expect(downloader.downloads).toBe(3)
 	})
 
+	it('retries tracks that did not download with another provider, chosen later', async () => {
+		// A second service that does have "Four".
+		const four: TargetTrack = { service: 'deezer', id: 'd4', url: 'https://www.deezer.com/track/d4', title: 'Four', artists: ['Nobody'], durationMs: 100_000 }
+		let deezerDownloads = 0
+		const deezer: Downloader = {
+			service: 'deezer',
+			isrcLookup: async () => null,
+			search: async (q) => (q.toLowerCase().includes('nobody') ? [four] : []),
+			getTrack: async () => ({
+				meta: four,
+				open: async () => {
+					deezerDownloads++
+					return { stream: Readable.from([Buffer.from('fake-audio-d4')]), mimeType: 'audio/mpeg', sizeBytes: 13 }
+				}
+			}),
+			accountInfo: async () => ({}),
+			accountQuality: async () => ({ codec: 'flac' as const, lossless: true })
+		}
+		Object.assign(kemix.accounts, {
+			isConnected: (s: SourceService) => s === 'spotify' || s === 'qobuz' || s === 'deezer',
+			downloader: async (s: string) => (s === 'deezer' ? deezer : downloader)
+		})
+
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, undefined, 'qobuz')
+		await settle(kemix)
+		let detail = await kemix.library.getPlaylist(playlist!.id)
+		expect(detail.tracks.map((t) => t.download?.status)).toEqual(['done', 'done', 'needs_review', 'needs_review'])
+
+		// Only the missing one, with Deezer: it's found and downloaded there; the rest is untouched.
+		await kemix.queue.enqueuePlaylist(playlist!.id, [3], 'deezer')
+		await settle(kemix)
+		detail = await kemix.library.getPlaylist(playlist!.id)
+		expect(detail.tracks.map((t) => t.download?.status)).toEqual(['done', 'done', 'needs_review', 'done'])
+		expect(detail.tracks[3]!.download?.service).toBe('deezer')
+		expect(deezerDownloads).toBe(1)
+		expect(downloader.downloads).toBe(2)
+
+		// A provider that isn't connected is refused up front.
+		Object.assign(kemix.accounts, { isConnected: (s: SourceService) => s === 'spotify' || s === 'qobuz' })
+		await expect(kemix.queue.enqueuePlaylist(playlist!.id, [2], 'deezer')).rejects.toThrow(/Deezer no está conectado/)
+	})
+
 	it('reuses already-downloaded files instead of downloading again', async () => {
 		await kemix.library.syncAll()
 		const [playlist] = kemix.library.listPlaylists()
@@ -155,6 +215,33 @@ describe('library + download queue', () => {
 		await settle(kemix)
 		expect(fs.existsSync(done)).toBe(true)
 		expect(downloader.downloads).toBe(3)
+	})
+
+	it('marks tracks as not downloaded when their file was deleted from disk', async () => {
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id)
+		await settle(kemix)
+
+		const before = await kemix.library.getPlaylist(playlist!.id)
+		fs.rmSync(before.tracks[0]!.download!.path!)
+
+		await kemix.library.syncAll()
+		const after = await kemix.library.getPlaylist(playlist!.id)
+		expect(after.tracks.map((t) => t.download?.status)).toEqual([undefined, 'done', 'needs_review', 'needs_review'])
+		expect(after.downloads.done).toBe(1)
+	})
+
+	it('searches a connected service and creates a playlist there that shows up in the library', async () => {
+		expect((await kemix.library.search('spotify', 'two')).map((t) => t.sourceId)).toEqual(['s2'])
+		await expect(kemix.library.search('deezer', 'two')).rejects.toThrow(/no está conectado/)
+		await expect(kemix.library.createPlaylist('spotify', '  ', ['s1'])).rejects.toThrow(/nombre/)
+
+		const { playlistId } = await kemix.library.createPlaylist('spotify', 'Nueva', ['s2', 's1'])
+		expect(playlistId).not.toBeNull()
+		const detail = await kemix.library.getPlaylist(playlistId!)
+		expect(detail.name).toBe('Nueva')
+		expect(detail.tracks.map((t) => t.title).sort()).toEqual(['One', 'Two'])
 	})
 
 	it('organizes playlists into folders and keeps them when a folder is deleted', async () => {

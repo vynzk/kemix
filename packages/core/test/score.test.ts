@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanTitle, scoreMatch, searchQuery, tokenSimilarity } from '../src/match/score'
+import { cleanTitle, scoreMatch, scoreYouTube, searchQuery, tokenSimilarity } from '../src/match/score'
 import type { TargetTrack } from '../src/types'
 
 const target = (t: Partial<TargetTrack>): TargetTrack => ({
@@ -79,5 +79,21 @@ describe('scoreMatch', () => {
 describe('searchQuery', () => {
 	it('uses primary artist and cleaned title', () => {
 		expect(searchQuery({ title: 'Song (feat. X) - 2011 Remaster', artists: ['A', 'X'] })).toBe('A Song')
+	})
+})
+
+describe('scoreYouTube', () => {
+	const track = { title: 'Get Lucky', artists: ['Daft Punk'], durationMs: 248_000 }
+	const yt = (title: string, channel: string, durationMs = 248_000) =>
+		({ service: 'youtube', id: 'x', url: '', title, artists: [channel], durationMs }) as const
+
+	it('sees through "Artist - Title (Official Video)" titles', () => {
+		expect(scoreYouTube(track, yt('Daft Punk - Get Lucky (Official Audio) ft. Pharrell Williams', 'Daft Punk'))).toBeGreaterThan(0.9)
+		expect(scoreYouTube(track, yt('Daft Punk - Get Lucky (Official Video)', 'convar HUN'))).toBeGreaterThan(0.85)
+	})
+
+	it('still penalizes other versions and songs', () => {
+		expect(scoreYouTube(track, yt('Daft Punk - Get Lucky (Live)', 'Daft Punk'))).toBeLessThan(0.8)
+		expect(scoreYouTube(track, yt('Daft Punk - One More Time', 'Daft Punk', 320_000))).toBeLessThan(0.5)
 	})
 })

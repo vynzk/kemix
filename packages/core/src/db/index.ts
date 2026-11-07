@@ -92,7 +92,15 @@ const MIGRATIONS: string[] = [
 	);
 	`,
 	// 2: show which account (email) each service is connected with.
-	`ALTER TABLE accounts ADD COLUMN email TEXT;`
+	`ALTER TABLE accounts ADD COLUMN email TEXT;`,
+	// 3: remember which service each file came from and the quality it was downloaded in.
+	`
+	ALTER TABLE downloads ADD COLUMN quality TEXT;
+	ALTER TABLE downloads ADD COLUMN service TEXT;
+	ALTER TABLE files ADD COLUMN quality TEXT;
+	`,
+	// 4: the provider the user picked for a download (NULL: automatic, by service priority).
+	`ALTER TABLE downloads ADD COLUMN provider TEXT;`
 ]
 
 export function openDb(file: string): Db {

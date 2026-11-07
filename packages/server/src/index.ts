@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
-import type { Kemix, MatchCandidate, Settings, SourceService } from '@kemix/core'
-import { SOURCE_SERVICES } from '@kemix/core'
+import type { Kemix, MatchCandidate, Settings, SourceService, SourceTrack, SpotifyWebLogin } from '@kemix/core'
+import { SOURCE_SERVICES, isDownloadService } from '@kemix/core'
 
 export interface ServerOptions {
 	kemix: Kemix
@@ -17,6 +17,7 @@ export interface ServerOptions {
 	 */
 	browserLogin?: {
 		qobuz(): Promise<string>
+		spotify: SpotifyWebLogin
 	}
 }
 
@@ -26,6 +27,7 @@ const PUBLIC_ROUTES = new Set(['/api/auth/spotify/callback'])
 export async function createServer(opts: ServerOptions): Promise<FastifyInstance> {
 	const { kemix } = opts
 	const app = Fastify({ logger: opts.logger ?? false })
+	if (opts.browserLogin) kemix.accounts.setSpotifyWebLogin(opts.browserLogin.spotify)
 
 	app.addHook('onRequest', async (req, reply) => {
 		if (!opts.token || !req.url.startsWith('/api/')) return
@@ -63,29 +65,13 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 
 	// ---------- accounts ----------
 
-	app.post('/api/accounts/qobuz', async (req) => {
-		await kemix.accounts.connectQobuz(req.body as Parameters<Kemix['accounts']['connectQobuz']>[0])
-		void kemix.library.syncAll()
-		return { ok: true }
-	})
 	app.post('/api/accounts/qobuz/browser', async () => {
 		if (!opts.browserLogin) {
 			throw Object.assign(new Error('El inicio de sesión en ventana solo está disponible en la app de escritorio'), {
 				statusCode: 404
 			})
 		}
-		const session = await opts.browserLogin.qobuz()
-		try {
-			await kemix.accounts.connectQobuz({ session })
-		} catch (err) {
-			// The generic errors talk about pasting cookies/cURL, which doesn't apply to the login window.
-			const message = err instanceof Error ? err.message : String(err)
-			throw new Error(
-				message.startsWith('No encontré un token')
-					? 'La ventana de Qobuz no entregó un token válido. Vuelve a intentarlo y espera a que cargue el reproductor.'
-					: message
-			)
-		}
+		await kemix.accounts.connectQobuz(await opts.browserLogin.qobuz())
 		void kemix.library.syncAll()
 		return { ok: true }
 	})
@@ -99,7 +85,13 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		if (result.status === 'connected') void kemix.library.syncAll()
 		return result
 	})
+	app.get('/api/accounts/quality', async () => kemix.accounts.downloadQualities())
 	app.post('/api/accounts/spotify/start', async () => ({ url: kemix.accounts.startSpotifyAuth() }))
+	app.post('/api/accounts/spotify/web', async () => {
+		await kemix.accounts.connectSpotifyWeb()
+		void kemix.library.syncAll()
+		return { ok: true }
+	})
 	app.get('/api/auth/spotify/callback', async (req, reply) => {
 		const q = req.query as { code?: string; state?: string; error?: string }
 		reply.type('text/html; charset=utf-8')
@@ -129,13 +121,34 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		playlists: kemix.library.listPlaylists()
 	}))
 
+	app.post('/api/search/:service', async (req) => {
+		const query = (req.body as { query?: unknown } | undefined)?.query
+		if (typeof query !== 'string') throw Object.assign(new Error('query inválida'), { statusCode: 400 })
+		return kemix.library.search(service(req.params), query)
+	})
+	app.post('/api/playlists/create/:service', async (req) => {
+		const body = req.body as { name?: unknown; trackIds?: unknown } | undefined
+		const trackIds = body?.trackIds
+		if (typeof body?.name !== 'string' || !Array.isArray(trackIds) || !trackIds.every((t) => typeof t === 'string')) {
+			throw Object.assign(new Error('Datos de playlist inválidos'), { statusCode: 400 })
+		}
+		return kemix.library.createPlaylist(service(req.params), body.name, trackIds as string[])
+	})
+
 	app.get('/api/playlists/:id', async (req) => kemix.library.getPlaylist(id(req.params)))
 	app.post('/api/playlists/:id/sync', async (req) => {
 		await kemix.library.syncPlaylistTracks(id(req.params), true)
 		return { ok: true }
 	})
 	app.post('/api/playlists/:id/download', async (req) => {
-		await kemix.queue.enqueuePlaylist(id(req.params))
+		const { positions, provider } = (req.body as { positions?: unknown; provider?: unknown } | undefined) ?? {}
+		if (positions !== undefined && (!Array.isArray(positions) || !positions.every((n) => Number.isInteger(n)))) {
+			throw Object.assign(new Error('positions inválidas'), { statusCode: 400 })
+		}
+		if (provider != null && !isDownloadService(provider)) {
+			throw Object.assign(new Error('Proveedor desconocido'), { statusCode: 400 })
+		}
+		await kemix.queue.enqueuePlaylist(id(req.params), positions as number[] | undefined, provider ?? null)
 		return { ok: true }
 	})
 	app.patch('/api/playlists/:id', async (req) => {
@@ -170,6 +183,33 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 	app.post('/api/review/:id/skip', async (req) => {
 		kemix.queue.skipTrack(id(req.params))
 		return { ok: true }
+	})
+	app.post('/api/review/:id/youtube', async (req) =>
+		kemix.queue.youtubeCandidates(id(req.params), (req.body as { query?: string } | undefined)?.query)
+	)
+	app.post('/api/review/youtube', async (req) => {
+		const ids = (req.body as { trackIds?: unknown } | undefined)?.trackIds
+		if (!Array.isArray(ids) || !ids.every((n) => Number.isInteger(n))) {
+			throw Object.assign(new Error('trackIds inválidos'), { statusCode: 400 })
+		}
+		return kemix.queue.downloadFromYouTube(ids as number[])
+	})
+
+	// ---------- preview ----------
+
+	app.get('/api/tracks/:id/preview', async (req) => ({ preview: await kemix.queue.preview(id(req.params)) }))
+	app.post('/api/preview/:service', async (req) => {
+		const t = req.body as Partial<SourceTrack> | undefined
+		if (!t || typeof t.sourceId !== 'string' || typeof t.title !== 'string' || !Array.isArray(t.artists)) {
+			throw Object.assign(new Error('tema inválido'), { statusCode: 400 })
+		}
+		const track: SourceTrack = {
+			sourceId: t.sourceId,
+			title: t.title,
+			artists: t.artists.filter((a): a is string => typeof a === 'string'),
+			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined
+		}
+		return { preview: await kemix.queue.previewTrack(service(req.params), track) }
 	})
 
 	// ---------- downloads ----------

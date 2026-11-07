@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, safeStorage, session, shell } from 'electron'
-import { Kemix, type Cipher } from '@kemix/core'
+import { Kemix, type Cipher, type SpotifyWebSession } from '@kemix/core'
 import { createServer } from '@kemix/server'
 
 /** Dev: the Vite dev server (started by `npm run dev` at the repo root). Prod: the server serves the built UI. */
@@ -27,7 +27,13 @@ async function startBackend(): Promise<number> {
 		kemix,
 		token,
 		uiDir: isDev ? undefined : path.join(process.resourcesPath, 'ui'),
-		browserLogin: { qobuz: captureQobuzSession }
+		browserLogin: {
+			qobuz: captureQobuzSession,
+			spotify: {
+				token: captureSpotifySession,
+				logout: () => session.fromPartition(SPOTIFY_PARTITION).clearStorageData()
+			}
+		}
 	})
 	await server.listen({ host: '127.0.0.1', port })
 	closeServer = () => server.close()
@@ -91,6 +97,137 @@ function captureQobuzSession(): Promise<string> {
 	})
 	void win.loadURL('https://play.qobuz.com/login')
 	qobuzLogin = { win, promise }
+	return promise
+}
+
+/** Kept on disk so the open.spotify.com sign-in survives restarts and the hourly token can be renewed silently. */
+const SPOTIFY_PARTITION = 'persist:kemix-spotify'
+/** Web player tokens last an hour; renew a bit before. */
+const SPOTIFY_TOKEN_TTL = 50 * 60_000
+/** Pages that make the player run each operation Kemix needs, in order: library + profile, liked songs, a playlist, search. */
+const SPOTIFY_TOUR: [url: string, op: string][] = [
+	['https://open.spotify.com/', 'libraryV3'],
+	['https://open.spotify.com/collection/tracks', 'fetchLibraryTracks'],
+	['https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M', 'fetchPlaylist'],
+	['https://open.spotify.com/search/kemix/tracks', 'searchTracks']
+]
+
+let spotifyLogin: { win: BrowserWindow; promise: Promise<SpotifyWebSession> } | undefined
+
+/**
+ * Capture a signed-in open.spotify.com web player session: its access token and the GraphQL operations (persisted
+ * query hash + variables) it sends to api-partner.spotify.com. Works for any account, Premium or not. Spotify changes
+ * those hashes over time, so they're read from the real player instead of being hardcoded.
+ * Interactive: show the window to sign in, then walk the player through the pages that run each operation.
+ * Silent: renew the token with the saved session in a hidden window.
+ */
+function captureSpotifySession(interactive: boolean): Promise<SpotifyWebSession> {
+	if (spotifyLogin && !spotifyLogin.win.isDestroyed()) {
+		if (interactive) {
+			spotifyLogin.win.show()
+			spotifyLogin.win.focus()
+		}
+		return spotifyLogin.promise
+	}
+	const ses = session.fromPartition(SPOTIFY_PARTITION)
+	const win = new BrowserWindow({
+		show: interactive,
+		width: 1100,
+		height: 820,
+		title: 'Inicia sesión en Spotify',
+		parent: BrowserWindow.getAllWindows()[0],
+		autoHideMenuBar: true,
+		webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false }
+	})
+	win.webContents.setUserAgent(win.webContents.getUserAgent().replace(/\s(Electron|kemix|@kemix\/desktop)\/\S+/gi, ''))
+
+	const promise = new Promise<SpotifyWebSession>((resolve, reject) => {
+		let done = false
+		let token: string | undefined
+		let clientToken: string | undefined
+		const ops: SpotifyWebSession['ops'] = {}
+		const signedIn = async () => (await ses.cookies.get({ name: 'sp_dc' })).length > 0
+		// The player also sends an anonymous token before sign-in: remember those so they're never taken.
+		const anonymous = new Set<string>()
+		const finish = (result: SpotifyWebSession | Error) => {
+			if (done) return
+			done = true
+			clearTimeout(timer)
+			if (result instanceof Error) reject(result)
+			else resolve(result)
+			setImmediate(() => !win.isDestroyed() && win.close())
+		}
+		const timer = interactive
+			? undefined
+			: setTimeout(() => finish(new Error('el reproductor web no respondió con una sesión iniciada')), 45_000)
+		const waitFor = async (ready: () => boolean, ms: number) => {
+			for (const end = Date.now() + ms; !done && !ready() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 300))
+			return ready()
+		}
+		const visit = (url: string) => win.loadURL(url).catch(() => {})
+
+		ses.webRequest.onBeforeRequest({ urls: ['https://api-partner.spotify.com/pathfinder/*'] }, (details, cb) => {
+			cb({})
+			try {
+				type Body = { operationName?: string; variables?: Record<string, unknown>; extensions?: { persistedQuery?: { sha256Hash?: string } } }
+				let body: Body
+				if (details.uploadData?.length) {
+					body = JSON.parse(Buffer.concat(details.uploadData.map((u) => u.bytes ?? Buffer.alloc(0))).toString('utf8')) as Body
+				} else {
+					const q = new URL(details.url).searchParams
+					body = {
+						operationName: q.get('operationName') ?? undefined,
+						variables: JSON.parse(q.get('variables') ?? '{}') as Record<string, unknown>,
+						extensions: JSON.parse(q.get('extensions') ?? '{}') as Body['extensions']
+					}
+				}
+				const hash = body.extensions?.persistedQuery?.sha256Hash
+				if (body.operationName && hash) ops[body.operationName] = { hash, variables: body.variables ?? {} }
+			} catch {
+				// not a GraphQL call we understand
+			}
+		})
+		ses.webRequest.onBeforeSendHeaders({ urls: ['https://*.spotify.com/*'] }, (details, cb) => {
+			cb({ requestHeaders: details.requestHeaders })
+			if (done) return
+			const headers = Object.fromEntries(Object.entries(details.requestHeaders).map(([k, v]) => [k.toLowerCase(), v]))
+			if (headers['client-token']) clientToken = headers['client-token']
+			const bearer = headers.authorization?.match(/^Bearer\s+(\S{20,})$/i)?.[1]
+			if (!bearer || bearer === token || anonymous.has(bearer)) return
+			void signedIn().then((yes) => {
+				if (yes) token = bearer
+				else anonymous.add(bearer)
+			})
+		})
+		win.on('closed', () => {
+			ses.webRequest.onBeforeRequest(null)
+			ses.webRequest.onBeforeSendHeaders(null)
+			spotifyLogin = undefined
+			finish(new Error(interactive ? 'Se cerró la ventana de Spotify antes de terminar' : 'no se pudo abrir el reproductor web'))
+		})
+
+		void (async () => {
+			// With a saved session the player loads signed in; otherwise start at the login page, which returns to it.
+			await visit(
+				(await signedIn())
+					? 'https://open.spotify.com/'
+					: `https://accounts.spotify.com/login?continue=${encodeURIComponent('https://open.spotify.com/')}`
+			)
+			if (!(await waitFor(() => !!token, interactive ? Number.POSITIVE_INFINITY : 30_000))) return
+			if (interactive) {
+				// Signed in: read the rest without making the user watch the player navigate around.
+				win.hide()
+				for (const [url, op] of SPOTIFY_TOUR) {
+					if (!ops[op]) await visit(url)
+					await waitFor(() => !!ops[op], 15_000)
+				}
+			} else {
+				await waitFor(() => !!ops.libraryV3, 8_000)
+			}
+			finish({ accessToken: token!, clientToken, expiresAt: Date.now() + SPOTIFY_TOKEN_TTL, ops: { ...ops } })
+		})()
+	})
+	spotifyLogin = { win, promise }
 	return promise
 }
 

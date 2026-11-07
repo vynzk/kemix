@@ -22,11 +22,19 @@ type Selection = { kind: 'all' } | { kind: 'unfiled' } | { kind: 'folder'; id: n
 
 type DragData = { type: 'playlist'; playlist: PlaylistSummary } | { type: 'folder'; folder: Folder }
 
-export function LibraryPage({ syncing, onGoToAccounts }: { syncing: boolean; onGoToAccounts: () => void }) {
+export function LibraryPage({
+	syncing,
+	onGoToAccounts,
+	initialPlaylist = null
+}: {
+	syncing: boolean
+	onGoToAccounts: () => void
+	initialPlaylist?: number | null
+}) {
 	const qc = useQueryClient()
 	const library = useQuery({ queryKey: ['library'], queryFn: api.library })
 	const [selection, setSelection] = useState<Selection>({ kind: 'all' })
-	const [openPlaylist, setOpenPlaylist] = useState<number | null>(null)
+	const [openPlaylist, setOpenPlaylist] = useState<number | null>(initialPlaylist)
 	const [filter, setFilter] = useState('')
 	const [serviceFilter, setServiceFilter] = useState<SourceService | 'all'>('all')
 	const [dragging, setDragging] = useState<DragData | null>(null)

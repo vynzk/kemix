@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { tx, type Db } from './db'
 import type { EventBus } from './events'
 import type { Accounts } from './accounts'
@@ -13,7 +14,8 @@ import type {
 	SourcePlaylist,
 	SourceService,
 	SourceTrack,
-	TargetService
+	AudioQuality,
+	DownloadService
 } from './types'
 import { SOURCE_SERVICES } from './types'
 import { errorMessage, now } from './util'
@@ -69,6 +71,9 @@ export class Library {
 		const errors: string[] = []
 		const summary: string[] = []
 		try {
+			this.events.emit({ type: 'sync', state: 'progress', message: 'Revisando archivos descargados…' })
+			const gone = this.checkFiles()
+			if (gone) summary.push(`${gone} ${gone === 1 ? 'archivo ya no está' : 'archivos ya no están'} en el computador`)
 			for (const service of SOURCE_SERVICES) {
 				if (!this.accounts.isConnected(service)) continue
 				const name = SERVICE_NAMES[service]
@@ -101,7 +106,57 @@ export class Library {
 		}
 	}
 
-	#upsertPlaylists(source: SourceService, playlists: SourcePlaylist[]) {
+	#connected(service: SourceService) {
+		if (!this.accounts.isConnected(service)) throw new Error(`${SERVICE_NAMES[service]} no está conectado`)
+		return this.accounts.source(service)
+	}
+
+	/** Search a service's catalog (it must be connected). */
+	async search(service: SourceService, query: string): Promise<SourceTrack[]> {
+		const source = this.#connected(service)
+		const q = query.trim()
+		if (!q) return []
+		try {
+			return await source.search(q, 30)
+		} catch (err) {
+			throw new Error(`No se pudo buscar en ${SERVICE_NAMES[service]}: ${errorMessage(err)}`)
+		}
+	}
+
+	/**
+	 * Create a playlist in the user's account on `service` and bring it into the library.
+	 * Returns its local id, or null if the service doesn't list it yet (it shows up on the next sync).
+	 */
+	async createPlaylist(service: SourceService, name: string, trackIds: string[]): Promise<{ playlistId: number | null }> {
+		const source = this.#connected(service)
+		const title = name.trim()
+		if (!title) throw new Error('Ponle un nombre a la playlist')
+		if (!trackIds.length) throw new Error('Agrega al menos un tema')
+		let sourceId: string
+		try {
+			sourceId = await source.createPlaylist(title, trackIds)
+		} catch (err) {
+			throw new Error(`No se pudo crear la playlist en ${SERVICE_NAMES[service]}: ${errorMessage(err)}`)
+		}
+		const created: SourcePlaylist = { sourceId, name: title, trackCount: trackIds.length }
+		let listed: SourcePlaylist[] | null = null
+		try {
+			listed = await source.listPlaylists()
+		} catch {
+			// Created anyway; it's added below and the next sync refreshes the rest.
+		}
+		// Some services (YouTube Music) take a while to list a new playlist: add it ourselves meanwhile.
+		if (!listed) this.#upsertPlaylists(service, [created], { partial: true })
+		else this.#upsertPlaylists(service, listed.some((p) => p.sourceId === sourceId) ? listed : [...listed, created])
+		this.events.emit({ type: 'library' })
+		const row = this.db.prepare('SELECT id FROM playlists WHERE source = ? AND source_id = ?').get(service, sourceId) as
+			| { id: number }
+			| undefined
+		return { playlistId: row?.id ?? null }
+	}
+
+	/** With `partial`, `playlists` isn't the whole list, so the ones missing from it aren't flagged as removed. */
+	#upsertPlaylists(source: SourceService, playlists: SourcePlaylist[], opts: { partial?: boolean } = {}) {
 		tx(this.db, () => {
 			const upsert = this.db.prepare(
 				`INSERT INTO playlists (source, source_id, name, owner, cover_url, track_count, snapshot, synced_at, removed)
@@ -115,6 +170,7 @@ export class Library {
 			for (const p of playlists) {
 				upsert.run(source, p.sourceId, p.name, p.owner ?? null, p.coverUrl ?? null, p.trackCount ?? null, p.snapshot ?? null, t)
 			}
+			if (opts.partial) return
 			// Playlists that disappeared from the service are flagged, not deleted: they may hold downloads/folders.
 			const ids = new Set(playlists.map((p) => p.sourceId))
 			const existing = this.db.prepare('SELECT id, source_id FROM playlists WHERE source = ?').all(source) as {
@@ -179,6 +235,39 @@ export class Library {
 		this.events.emit({ type: 'playlist', playlistId })
 	}
 
+	/**
+	 * Forget finished downloads whose file was deleted or moved, so those tracks show as pending again.
+	 * Returns how many downloads were affected.
+	 */
+	checkFiles(playlistId?: number): number {
+		const done = this.db
+			.prepare(
+				`SELECT id, playlist_id, path FROM downloads WHERE status = 'done'${playlistId === undefined ? '' : ' AND playlist_id = ?'}`
+			)
+			.all(...(playlistId === undefined ? [] : [playlistId])) as { id: number; playlist_id: number; path: string | null }[]
+		const gone = done.filter((d) => !d.path || !fs.existsSync(d.path))
+		// The shared file registry is only swept on a full scan; the queue re-checks it before reusing a file anyway.
+		const files =
+			playlistId === undefined
+				? (this.db.prepare('SELECT target_service, target_id, path FROM files').all() as {
+						target_service: string
+						target_id: string
+						path: string
+					}[])
+				: []
+		const goneFiles = files.filter((f) => !fs.existsSync(f.path))
+		if (!gone.length && !goneFiles.length) return 0
+		tx(this.db, () => {
+			const del = this.db.prepare('DELETE FROM downloads WHERE id = ?')
+			for (const d of gone) del.run(d.id)
+			const delFile = this.db.prepare('DELETE FROM files WHERE target_service = ? AND target_id = ?')
+			for (const f of goneFiles) delFile.run(f.target_service, f.target_id)
+		})
+		for (const id of new Set(gone.map((d) => d.playlist_id))) this.events.emit({ type: 'playlist', playlistId: id })
+		if (gone.length) this.events.emit({ type: 'library' })
+		return gone.length
+	}
+
 	#playlist(id: number): PlaylistRow {
 		const p = this.db.prepare('SELECT * FROM playlists WHERE id = ?').get(id) as PlaylistRow | undefined
 		if (!p) throw new Error('Playlist no encontrada')
@@ -230,12 +319,13 @@ export class Library {
 
 	async getPlaylist(id: number): Promise<PlaylistDetail> {
 		await this.syncPlaylistTracks(id)
+		this.checkFiles(id)
 		const summary = this.listPlaylists().find((p) => p.id === id)!
 		const rows = this.db
 			.prepare(
 				`SELECT pt.position, t.id AS track_id, t.title, t.artists, t.album, t.duration_ms, t.isrc,
-				   m.status AS m_status, m.target_service, m.target_url, m.confidence,
-				   d.status AS d_status, d.error AS d_error, d.path AS d_path
+				   m.status AS m_status, m.target_service, m.target_url, m.confidence, m.target_meta,
+				   d.status AS d_status, d.error AS d_error, d.path AS d_path, d.quality AS d_quality, d.service AS d_service
 				 FROM playlist_tracks pt
 				 JOIN tracks t ON t.id = pt.track_id
 				 LEFT JOIN matches m ON m.track_id = t.id
@@ -252,12 +342,15 @@ export class Library {
 			duration_ms: number | null
 			isrc: string | null
 			m_status: MatchStatus | null
-			target_service: TargetService | null
+			target_service: DownloadService | null
 			target_url: string | null
 			confidence: number | null
+			target_meta: string | null
 			d_status: DownloadStatus | null
 			d_error: string | null
 			d_path: string | null
+			d_quality: string | null
+			d_service: DownloadService | null
 		}[]
 		const tracks: PlaylistTrackRow[] = rows.map((r) => ({
 			position: r.position,
@@ -268,9 +361,23 @@ export class Library {
 			durationMs: r.duration_ms,
 			isrc: r.isrc,
 			match: r.m_status
-				? { status: r.m_status, targetService: r.target_service, targetUrl: r.target_url, confidence: r.confidence }
+				? {
+						status: r.m_status,
+						targetService: r.target_service,
+						targetUrl: r.target_url,
+						confidence: r.confidence,
+						maxQuality: r.target_meta ? ((JSON.parse(r.target_meta) as MatchCandidate).maxQuality ?? null) : null
+					}
 				: null,
-			download: r.d_status ? { status: r.d_status, error: r.d_error, path: r.d_path } : null
+			download: r.d_status
+				? {
+						status: r.d_status,
+						error: r.d_error,
+						path: r.d_path,
+						quality: r.d_quality ? (JSON.parse(r.d_quality) as AudioQuality) : null,
+						service: r.d_service
+					}
+				: null
 		}))
 		return { ...summary, tracks }
 	}
@@ -356,7 +463,7 @@ export class Library {
 	listReview(): ReviewItem[] {
 		const rows = this.db
 			.prepare(
-				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, m.candidates,
+				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, m.candidates, m.status,
 				   (SELECT json_group_array(DISTINCT p.name) FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
 				    WHERE pt.track_id = t.id) AS playlists
 				 FROM matches m JOIN tracks t ON t.id = m.track_id
@@ -372,6 +479,7 @@ export class Library {
 			duration_ms: number | null
 			source: SourceService
 			candidates: string | null
+			status: MatchStatus
 			playlists: string
 		}[]
 		return rows.map((r) => ({
@@ -382,7 +490,8 @@ export class Library {
 			durationMs: r.duration_ms,
 			source: r.source,
 			playlists: JSON.parse(r.playlists),
-			candidates: r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : []
+			candidates: r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : [],
+			notFound: r.status === 'notfound'
 		}))
 	}
 

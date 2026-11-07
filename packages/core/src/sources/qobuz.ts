@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import type { SourceConnector } from './types'
-import type { AccountIdentity, SourcePlaylist, SourceTrack } from '../types'
+import type { AccountIdentity, SourcePlaylist, SourceTrack, StreamPreview } from '../types'
 import { fetchJson, HttpError } from '../util'
 
 const API = 'https://www.qobuz.com/api.json/0.2/'
@@ -61,13 +61,27 @@ export class QobuzApi {
 		return fetchJson<T>(url, { headers })
 	}
 
+	/** Write calls (create a playlist, add tracks) go as a form POST, like the web player sends them. */
+	async post<T>(endpoint: string, params: Record<string, string | number>): Promise<T> {
+		const url = new URL(endpoint, API)
+		url.searchParams.set('app_id', this.creds.appId)
+		const body = new URLSearchParams(Object.entries(params).map(([k, v]): [string, string] => [k, String(v)]))
+		const headers: Record<string, string> = {
+			'X-App-Id': this.creds.appId,
+			'Content-Type': 'application/x-www-form-urlencoded'
+		}
+		if (this.creds.token) {
+			headers['X-User-Auth-Token'] = this.creds.token
+			body.set('user_auth_token', this.creds.token)
+		}
+		return fetchJson<T>(url, { method: 'POST', headers, body })
+	}
+
 	/**
-	 * Log in with email + password, or with an existing session (token, plus user id when known) from play.qobuz.com.
+	 * Log in with an existing session (token, plus user id when known) captured from play.qobuz.com.
 	 * The login response already carries the user's name and email, so no extra user lookup is needed.
 	 */
-	async login(
-		input: { email: string; password: string } | { userId?: string; token: string }
-	): Promise<{ token: string; userId?: string; userName: string; email?: string }> {
+	async login(input: { userId?: string; token: string }): Promise<{ token: string; userId?: string; userName: string; email?: string }> {
 		type LoginResponse = {
 			user_auth_token: string
 			user: { id: number; display_name?: string; login?: string; email?: string }
@@ -80,12 +94,6 @@ export class QobuzApi {
 				userName: res.user.display_name ?? res.user.login ?? res.user.email ?? String(res.user.id),
 				email: res.user.email
 			}
-		}
-
-		if ('password' in input) {
-			// Older clients send `email`, newer ones (lucida) `username`; send both so either API version accepts it.
-			const params = { username: input.email, email: input.email, password: md5(input.password) }
-			return fromLogin(await this.get<LoginResponse>('user/login', params))
 		}
 
 		// Existing session. With the user id this is the documented token login; without it, try what Qobuz
@@ -110,20 +118,23 @@ export class QobuzApi {
 		return { token, userName: 'Cuenta de Qobuz' }
 	}
 
-	/** True if `secret` can sign a track/getFileUrl request for this app id. */
-	async testSecret(secret: string): Promise<boolean> {
-		const trackId = 5966783
-		const formatId = 27
+	/** Signed track/getFileUrl: a direct link to the audio file (it expires after a while). */
+	async fileUrl(trackId: number | string, formatId: number, secret: string) {
 		const ts = Math.floor(Date.now() / 1000)
 		const sig = md5(`trackgetFileUrlformat_id${formatId}intentstreamtrack_id${trackId}${ts}${secret}`)
+		return this.get<{ url?: string; sample?: boolean }>('track/getFileUrl', {
+			track_id: trackId,
+			format_id: formatId,
+			intent: 'stream',
+			request_ts: ts,
+			request_sig: sig
+		})
+	}
+
+	/** True if `secret` can sign a track/getFileUrl request for this app id. */
+	async testSecret(secret: string): Promise<boolean> {
 		try {
-			await this.get('track/getFileUrl', {
-				track_id: trackId,
-				format_id: formatId,
-				intent: 'stream',
-				request_ts: ts,
-				request_sig: sig
-			})
+			await this.fileUrl(5966783, 27, secret)
 			return true
 		} catch (err) {
 			if (err instanceof HttpError && err.status === 400) return false
@@ -203,6 +214,38 @@ export class QobuzSource implements SourceConnector {
 			if (offset + 500 >= res.tracks.total) break
 		}
 		return out
+	}
+
+	async search(query: string, limit: number): Promise<SourceTrack[]> {
+		const res = await this.#api.get<{ tracks?: { items: QobuzTrackRaw[] } }>('catalog/search', {
+			query,
+			type: 'tracks',
+			limit
+		})
+		return (res.tracks?.items ?? []).map(parseQobuzTrack)
+	}
+
+	async stream(trackId: string): Promise<StreamPreview | null> {
+		// 5 = MP3 320: starts fast and every subscription has it. Without an active subscription Qobuz sends a clip.
+		const res = await this.#api.fileUrl(trackId, 5, this.creds.appSecret)
+		return res.url ? { url: res.url, full: !res.sample } : null
+	}
+
+	async createPlaylist(name: string, trackIds: string[]): Promise<string> {
+		const playlist = await this.#api.post<{ id: number }>('playlist/create', {
+			name,
+			description: 'Creada con Kemix',
+			is_public: 0,
+			is_collaborative: 0
+		})
+		for (let i = 0; i < trackIds.length; i += 50) {
+			await this.#api.post('playlist/addTracks', {
+				playlist_id: playlist.id,
+				track_ids: trackIds.slice(i, i + 50).join(','),
+				no_duplicate: 1
+			})
+		}
+		return String(playlist.id)
 	}
 }
 

@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Settings, TargetService } from '@kemix/core'
+import type { DownloadService, Settings } from '@kemix/core'
 import { api } from '../lib/api'
 import { SERVICE_LABEL } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
+
+/** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
+const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'youtube']
 
 export function SettingsPage() {
 	const qc = useQueryClient()
@@ -22,7 +25,15 @@ export function SettingsPage() {
 	if (!draft) return null
 
 	const set = <K extends keyof Settings>(key: K, value: Settings[K]) => setDraft({ ...draft, [key]: value })
-	const swapPriority = () => set('servicePriority', [...draft.servicePriority].reverse() as TargetService[])
+	const priority = draft.servicePriority
+	const disabled = ALL_DOWNLOADERS.filter((s) => !priority.includes(s))
+	const move = (i: number, by: -1 | 1) => {
+		const next = [...priority]
+		;[next[i], next[i + by]] = [next[i + by]!, next[i]!]
+		set('servicePriority', next)
+	}
+	const toggle = (s: DownloadService) =>
+		set('servicePriority', priority.includes(s) ? priority.filter((x) => x !== s) : [...priority, s])
 
 	return (
 		<div>
@@ -37,19 +48,46 @@ export function SettingsPage() {
 				<Field label="Carpeta de descargas" hint="Cada playlist se guarda en su propia subcarpeta, con un .m3u8.">
 					<Input value={draft.downloadDir} onChange={(e) => set('downloadDir', e.target.value)} />
 				</Field>
-				<Field label="Prioridad de servicios de descarga" hint="Se busca primero en el de arriba. Qobuz descarga siempre la máxima calidad disponible.">
-					<div className="flex items-center gap-3">
-						<ol className="flex-1 space-y-1">
-							{draft.servicePriority.map((s, i) => (
-								<li key={s} className="rounded-md border border-line px-3 py-1.5 text-sm">
+				<Field
+					label="Prioridad de servicios de descarga"
+					hint="En modo automático se busca primero en el de arriba. Qobuz descarga siempre la máxima calidad disponible. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas; necesita yt-dlp."
+				>
+					<ol className="space-y-1">
+						{priority.map((s, i) => (
+							<li key={s} className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm">
+								<span className="flex-1">
 									{i + 1}. {SERVICE_LABEL[s]}
-								</li>
-							))}
-						</ol>
-						<Button type="button" onClick={swapPriority}>
-							⇅ Invertir
-						</Button>
-					</div>
+									{s === 'youtube' && <span className="ml-1 text-xs text-amber-300/80">con pérdida</span>}
+								</span>
+								<Button type="button" variant="ghost" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Subir">
+									↑
+								</Button>
+								<Button
+									type="button"
+									variant="ghost"
+									onClick={() => move(i, 1)}
+									disabled={i === priority.length - 1}
+									aria-label="Bajar"
+								>
+									↓
+								</Button>
+								<Button type="button" variant="ghost" onClick={() => toggle(s)} disabled={priority.length === 1}>
+									Quitar
+								</Button>
+							</li>
+						))}
+						{disabled.map((s) => (
+							<li
+								key={s}
+								className="flex items-center gap-2 rounded-md border border-dashed border-line px-3 py-1.5 text-sm text-muted"
+							>
+								<span className="flex-1">{SERVICE_LABEL[s]} (desactivado)</span>
+								<Button type="button" variant="ghost" onClick={() => toggle(s)}>
+									Añadir
+								</Button>
+							</li>
+						))}
+					</ol>
 				</Field>
 				<Field label="Descargas simultáneas">
 					<Input
@@ -76,6 +114,16 @@ export function SettingsPage() {
 				</Field>
 				<Field label="Puerto local" hint="Usado por la redirección OAuth de Spotify. Requiere reiniciar la app.">
 					<Input type="number" value={draft.port} onChange={(e) => set('port', Number(e.target.value))} />
+				</Field>
+				<Field
+					label="Ruta de yt-dlp (opcional)"
+					hint="Solo para bajar desde YouTube los temas que no están en Qobuz/Deezer. Vacío: se busca yt-dlp en el PATH (instálalo con: winget install yt-dlp)."
+				>
+					<Input
+						placeholder="C:\ruta\a\yt-dlp.exe"
+						value={draft.ytDlpPath ?? ''}
+						onChange={(e) => set('ytDlpPath', e.target.value)}
+					/>
 				</Field>
 				<ErrorText error={save.error} />
 				<div className="flex items-center gap-3">

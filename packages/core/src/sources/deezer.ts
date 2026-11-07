@@ -1,5 +1,6 @@
 import type { SourceConnector } from './types'
-import type { AccountIdentity, SourcePlaylist, SourceTrack } from '../types'
+import type { AccountIdentity, SourcePlaylist, SourceTrack, StreamPreview } from '../types'
+import { fetchJson } from '../util'
 
 const GW_LIGHT = 'https://www.deezer.com/ajax/gw-light.php'
 const HEADERS = {
@@ -135,15 +136,50 @@ export class DeezerSource implements SourceConnector {
 			playlist_id: playlistId,
 			nb: -1
 		})
-		return res.data.map((t) => ({
-			sourceId: t.SNG_ID,
-			title: t.VERSION ? `${t.SNG_TITLE} ${t.VERSION}` : t.SNG_TITLE,
-			artists: t.ARTISTS?.length ? t.ARTISTS.map((a) => a.ART_NAME) : [t.ART_NAME],
-			album: t.ALB_TITLE,
-			durationMs: t.DURATION ? Number(t.DURATION) * 1000 : undefined,
-			isrc: t.ISRC,
-			coverUrl: cover('cover', t.ALB_PICTURE),
-			url: `https://www.deezer.com/track/${t.SNG_ID}`
-		}))
+		return res.data.map(toTrack)
+	}
+
+	async search(query: string, limit: number): Promise<SourceTrack[]> {
+		await this.#init()
+		const res = await this.#gw.call<{ data?: DeezerSongRaw[] }>('search.music', {
+			QUERY: query,
+			FILTER: 'ALL',
+			OUTPUT: 'TRACK',
+			START: 0,
+			NB: limit
+		})
+		return (res.data ?? []).map(toTrack)
+	}
+
+	/** Deezer's full streams are encrypted; its public API gives a 30-second clip. */
+	async stream(trackId: string): Promise<StreamPreview | null> {
+		if (!/^\d+$/.test(trackId)) return null
+		const res = await fetchJson<{ preview?: string }>(`https://api.deezer.com/track/${trackId}`)
+		return res?.preview ? { url: res.preview, full: false } : null
+	}
+
+	async createPlaylist(name: string, trackIds: string[]): Promise<string> {
+		await this.#init()
+		const id = await this.#gw.call<number | string>('playlist.create', {
+			title: name,
+			description: 'Creada con Kemix',
+			// 0 = public, 1 = private
+			status: 1,
+			songs: trackIds.map((songId, i) => [songId, i])
+		})
+		return String(id)
+	}
+}
+
+function toTrack(t: DeezerSongRaw): SourceTrack {
+	return {
+		sourceId: t.SNG_ID,
+		title: t.VERSION ? `${t.SNG_TITLE} ${t.VERSION}` : t.SNG_TITLE,
+		artists: t.ARTISTS?.length ? t.ARTISTS.map((a) => a.ART_NAME) : [t.ART_NAME],
+		album: t.ALB_TITLE,
+		durationMs: t.DURATION ? Number(t.DURATION) * 1000 : undefined,
+		isrc: t.ISRC,
+		coverUrl: cover('cover', t.ALB_PICTURE),
+		url: `https://www.deezer.com/track/${t.SNG_ID}`
 	}
 }

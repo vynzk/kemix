@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "postinstall": "install-electron",
     "dev": "concurrently -k -n ui,app -c cyan,green \"npm run dev -w @kemix/ui\" \"npm run dev -w @kemix/desktop\"",
     "dev:web": "concurrently -k -n server,ui -c yellow,cyan \"npm run dev -w @kemix/server\" \"npm run dev -w @kemix/ui\"",
     "build": "npm run build -w @kemix/ui && npm run build -w @kemix/desktop",

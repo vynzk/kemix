@@ -8,7 +8,9 @@ const SCOPES = [
 	'playlist-read-collaborative',
 	'user-library-read',
 	'user-read-private',
-	'user-read-email'
+	'user-read-email',
+	'playlist-modify-private',
+	'playlist-modify-public'
 ]
 const API = 'https://api.spotify.com/v1'
 /** Pseudo playlist id for the user's "Liked Songs", which the API exposes separately. */
@@ -90,43 +92,58 @@ interface Paging<T> {
 	next: string | null
 }
 
-export class SpotifySource implements SourceConnector {
-	readonly service = 'spotify' as const
-
-	constructor(
-		private tokens: SpotifyTokens,
-		/** Called whenever tokens are refreshed so they can be persisted. */
-		private onTokens: (t: SpotifyTokens) => void
-	) {}
-
-	async #token(): Promise<string> {
-		if (Date.now() < this.tokens.expiresAt - 60_000) return this.tokens.accessToken
+/** OAuth (PKCE) tokens from the user's own Spotify app, refreshed with the refresh token. */
+function oauthToken(initial: SpotifyTokens, onTokens: (t: SpotifyTokens) => void): () => Promise<string> {
+	let tokens = initial
+	return async () => {
+		if (Date.now() < tokens.expiresAt - 60_000) return tokens.accessToken
 		const res = await tokenRequest({
 			grant_type: 'refresh_token',
-			refresh_token: this.tokens.refreshToken,
-			client_id: this.tokens.clientId
+			refresh_token: tokens.refreshToken,
+			client_id: tokens.clientId
 		})
-		this.tokens = {
-			...this.tokens,
+		tokens = {
+			...tokens,
 			accessToken: res.access_token,
-			refreshToken: res.refresh_token ?? this.tokens.refreshToken,
+			refreshToken: res.refresh_token ?? tokens.refreshToken,
 			expiresAt: Date.now() + res.expires_in * 1000
 		}
-		this.onTokens(this.tokens)
-		return this.tokens.accessToken
+		onTokens(tokens)
+		return tokens.accessToken
+	}
+}
+
+const PREMIUM_HINT =
+	'Spotify solo abre su Web API (el método con Client ID) a cuentas Premium. Conecta con «Iniciar sesión en Spotify (sin Premium)».'
+
+/** Spotify through its public Web API with the user's own app (Client ID). Needs Premium. */
+export class SpotifySource implements SourceConnector {
+	readonly service = 'spotify' as const
+	#token: () => Promise<string>
+
+	constructor(tokens: SpotifyTokens, onTokens: (t: SpotifyTokens) => void) {
+		this.#token = oauthToken(tokens, onTokens)
 	}
 
-	async get<T>(urlOrPath: string): Promise<T> {
+	get<T>(urlOrPath: string): Promise<T> {
+		return this.request<T>('GET', urlOrPath)
+	}
+
+	async request<T>(method: 'GET' | 'POST', urlOrPath: string, body?: object): Promise<T> {
 		const url = urlOrPath.startsWith('http') ? urlOrPath : `${API}${urlOrPath}`
 		for (let attempt = 0; ; attempt++) {
 			try {
-				return await fetchJson<T>(url, { headers: { Authorization: `Bearer ${await this.#token()}` } })
+				const headers: Record<string, string> = { Authorization: `Bearer ${await this.#token()}` }
+				if (body) headers['Content-Type'] = 'application/json'
+				return await fetchJson<T>(url, { method, headers, body: body ? JSON.stringify(body) : undefined })
 			} catch (err) {
+				if (!(err instanceof HttpError)) throw err
 				// Rate limited: back off and retry a few times.
-				if (err instanceof HttpError && err.status === 429 && attempt < 4) {
+				if (err.status === 429 && attempt < 4) {
 					await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)))
 					continue
 				}
+				if (err.status === 403 && /premium/i.test(err.message)) throw new Error(PREMIUM_HINT)
 				throw err
 			}
 		}
@@ -142,10 +159,15 @@ export class SpotifySource implements SourceConnector {
 		return out
 	}
 
-	async me(): Promise<{ id: string; displayName: string; email?: string }> {
+	async me(): Promise<{ id: string; displayName: string; email?: string; premium?: boolean }> {
 		// `email` is only present when the token has the user-read-email scope (connections made before it was added lack it).
-		const me = await this.get<{ id: string; display_name?: string; email?: string }>('/me')
-		return { id: me.id, displayName: me.display_name ?? me.id, email: me.email }
+		const me = await this.get<{ id: string; display_name?: string; email?: string; product?: string }>('/me')
+		return {
+			id: me.id,
+			displayName: me.display_name ?? me.id,
+			email: me.email,
+			premium: me.product ? me.product === 'premium' : undefined
+		}
 	}
 
 	async identity(): Promise<AccountIdentity> {
@@ -194,21 +216,64 @@ export class SpotifySource implements SourceConnector {
 				items = await this.#all<Item>(`/playlists/${playlistId}/tracks?limit=100`)
 			}
 		}
-		const out: SourceTrack[] = []
-		for (const it of items) {
-			const t = it.item ?? it.track
-			if (!t || !t.id || t.is_local || (t.type && t.type !== 'track')) continue
-			out.push({
-				sourceId: t.id,
-				title: t.name,
-				artists: t.artists?.map((a) => a.name) ?? [],
-				album: t.album?.name,
-				durationMs: t.duration_ms,
-				isrc: t.external_ids?.isrc,
-				coverUrl: largest(t.album?.images),
-				url: t.external_urls?.spotify
-			})
-		}
-		return out
+		return items.map((it) => it.item ?? it.track).flatMap((t) => (t ? toTrack(t) : []))
 	}
+
+	async search(query: string, limit: number): Promise<SourceTrack[]> {
+		// Apps in development mode get small search pages: fetch several pages of 10.
+		const out: SourceTrack[] = []
+		for (let offset = 0; offset < limit; offset += 10) {
+			const q = new URLSearchParams({ q: query, type: 'track', limit: '10', offset: String(offset) })
+			const res = await this.get<{ tracks: Paging<SpotifyTrackRaw> }>(`/search?${q}`)
+			out.push(...res.tracks.items.flatMap(toTrack))
+			if (!res.tracks.next) break
+		}
+		return out.slice(0, limit)
+	}
+
+	async createPlaylist(name: string, trackIds: string[]): Promise<string> {
+		try {
+			const body = { name, public: false, description: 'Creada con Kemix' }
+			let playlist: { id: string }
+			try {
+				playlist = await this.request<{ id: string }>('POST', '/me/playlists', body)
+			} catch (err) {
+				if (!(err instanceof HttpError && err.status === 404)) throw err
+				playlist = await this.request<{ id: string }>('POST', `/users/${encodeURIComponent((await this.me()).id)}/playlists`, body)
+			}
+			for (let i = 0; i < trackIds.length; i += 100) {
+				const uris = trackIds.slice(i, i + 100).map((id) => `spotify:track:${id}`)
+				try {
+					await this.request('POST', `/playlists/${playlist.id}/items`, { uris })
+				} catch (err) {
+					if (!(err instanceof HttpError && err.status === 404)) throw err
+					await this.request('POST', `/playlists/${playlist.id}/tracks`, { uris })
+				}
+			}
+			return playlist.id
+		} catch (err) {
+			if (err instanceof HttpError && (err.status === 401 || err.status === 403)) {
+				throw new Error(
+					'Spotify no dio permiso para crear playlists. Desconecta y vuelve a conectar Spotify en Cuentas para autorizarlo.'
+				)
+			}
+			throw err
+		}
+	}
+}
+
+function toTrack(t: SpotifyTrackRaw): SourceTrack[] {
+	if (!t.id || t.is_local || (t.type && t.type !== 'track')) return []
+	return [
+		{
+			sourceId: t.id,
+			title: t.name,
+			artists: t.artists?.map((a) => a.name) ?? [],
+			album: t.album?.name,
+			durationMs: t.duration_ms,
+			isrc: t.external_ids?.isrc,
+			coverUrl: largest(t.album?.images),
+			url: t.external_urls?.spotify
+		}
+	]
 }

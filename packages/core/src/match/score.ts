@@ -104,6 +104,29 @@ export function scoreMatch(
 	return Math.max(0, Math.min(1, Math.round(score * 1000) / 1000))
 }
 
+/**
+ * YouTube video titles look like "Artist - Title (Official Video)" and the channel stands in for the artist.
+ * Drop the video noise and split off the "Artist - " prefix before scoring like any other candidate.
+ */
+export function scoreYouTube(
+	source: Pick<SourceTrack, 'title' | 'artists' | 'durationMs'>,
+	candidate: TargetTrack
+): number {
+	let title = candidate.title
+		.replace(
+			/[([][^)\]]*(?:official|video|audio|lyrics?|letra|visuali[sz]er|hd|hq|4k|m\/v|\bmv\b)[^)\]]*[)\]]/gi,
+			' '
+		)
+		.replace(/\|.*$/, ' ')
+	let artists = candidate.artists
+	const parts = title.split(/\s[-–—]\s/)
+	if (parts.length >= 2) {
+		artists = [parts[0]!, ...artists]
+		title = parts.slice(1).join(' ')
+	}
+	return scoreMatch({ ...source, isrc: undefined }, { ...candidate, title, artists })
+}
+
 export function searchQuery(track: Pick<SourceTrack, 'title' | 'artists'>): string {
 	return `${track.artists[0] ?? ''} ${cleanTitle(track.title)}`.replace(/\s+/g, ' ').trim()
 }

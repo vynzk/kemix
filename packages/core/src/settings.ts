@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import type { Db } from './db'
-import { TARGET_SERVICES, type Settings } from './types'
+import { DOWNLOAD_SERVICES, type Settings } from './types'
 
 export const DEFAULT_PORT = 47800
 
@@ -12,6 +12,7 @@ export function defaultSettings(): Settings {
 		concurrency: 3,
 		autoAcceptThreshold: 0.9,
 		spotifyClientId: '',
+		ytDlpPath: '',
 		port: DEFAULT_PORT
 	}
 }
@@ -38,7 +39,7 @@ export class SettingsStore {
 }
 
 function sanitize(s: Settings): Settings {
-	const priority = s.servicePriority.filter((x) => TARGET_SERVICES.includes(x))
+	const priority = s.servicePriority.filter((x) => DOWNLOAD_SERVICES.includes(x))
 	return {
 		...s,
 		downloadDir: s.downloadDir.trim() || defaultSettings().downloadDir,
@@ -46,6 +47,7 @@ function sanitize(s: Settings): Settings {
 		concurrency: clamp(Math.round(s.concurrency), 1, 8),
 		autoAcceptThreshold: clamp(s.autoAcceptThreshold, 0.5, 1),
 		spotifyClientId: s.spotifyClientId.trim(),
+		ytDlpPath: (s.ytDlpPath ?? '').trim().replace(/^"(.*)"$/, '$1'),
 		port: clamp(Math.round(s.port), 1024, 65535)
 	}
 }

@@ -1,31 +1,70 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { AccountInfo, SourceService, YtMusicAccount } from '@kemix/core'
+import type { AccountInfo, AudioQuality, DownloadService, SourceService, TargetService, YtMusicAccount } from '@kemix/core'
 import { api } from '../lib/api'
-import { SERVICE_COLOR, SERVICE_LABEL } from '../lib/format'
+import { SERVICE_COLOR, SERVICE_LABEL, cx, qualityLabel, qualityTone } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 export function AccountsPage() {
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
 	const accounts = new Map(state.data?.accounts.map((a) => [a.service, a]))
 	const get = (s: SourceService): AccountInfo => accounts.get(s) ?? { service: s, status: 'disconnected' }
+	const connectedKey = (state.data?.accounts ?? []).map((a) => `${a.service}:${a.status}`).join(',')
+	const qualities = useQuery({
+		queryKey: ['account-quality', connectedKey],
+		queryFn: api.downloadQualities,
+		enabled: !!state.data
+	})
+	const priority = state.data?.settings.servicePriority ?? []
+	const download = (service: TargetService) => (
+		<DownloadQuality
+			service={service}
+			connected={get(service).status === 'connected'}
+			quality={qualities.data?.[service]}
+			loading={qualities.isLoading}
+			isDefault={priority[0] === service}
+			priority={priority}
+		/>
+	)
 
 	return (
 		<div>
 			<PageHeader title="Cuentas">
-				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music solo para importar.
+				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists;
+				YouTube además sirve de respaldo para descargar lo que no está en Qobuz ni Deezer.
 			</PageHeader>
 			<div className="grid gap-4 p-8 xl:grid-cols-2">
-				<AccountCard account={get('qobuz')} role="Importar + descargar (FLAC hasta 24-bit)">
+				<AccountCard account={get('qobuz')} role="Importar + descargar" download={download('qobuz')}>
 					<QobuzForm browserLogin={state.data?.browserLogin ?? false} />
 				</AccountCard>
-				<AccountCard account={get('deezer')} role="Importar + descargar (FLAC 16-bit)">
+				<AccountCard account={get('deezer')} role="Importar + descargar" download={download('deezer')}>
 					<DeezerForm />
 				</AccountCard>
-				<AccountCard account={get('spotify')} role="Solo importar playlists">
-					<SpotifyForm redirectUri={state.data?.spotifyRedirectUri ?? ''} clientId={state.data?.settings.spotifyClientId ?? ''} />
+				<AccountCard
+					account={get('spotify')}
+					role="Importar playlists y crear nuevas"
+					download={<p className="text-xs text-zinc-500">No descarga audio: sus temas se bajan desde Qobuz o Deezer.</p>}
+				>
+					<SpotifyForm
+						browserLogin={state.data?.browserLogin ?? false}
+						redirectUri={state.data?.spotifyRedirectUri ?? ''}
+						clientId={state.data?.settings.spotifyClientId ?? ''}
+					/>
 				</AccountCard>
-				<AccountCard account={get('ytmusic')} role="Solo importar playlists (no oficial)" connectedExtra={<YtSwitchAccount />}>
+				<AccountCard
+					account={get('ytmusic')}
+					role="Importar playlists (no oficial) + respaldo de descarga"
+					connectedExtra={<YtSwitchAccount />}
+					download={
+						<p className="text-xs text-muted">
+							Descarga desde YouTube hasta{' '}
+							<span className={qualityTone(qualities.data?.youtube ?? null)}>
+								{qualities.data?.youtube ? qualityLabel(qualities.data.youtube) : 'AAC ~128 kbps'}
+							</span>{' '}
+							(con pérdida). Solo como respaldo y cuando lo pides; no necesita esta cuenta.
+						</p>
+					}
+				>
 					<YtMusicForm />
 				</AccountCard>
 			</div>
@@ -33,14 +72,67 @@ export function AccountsPage() {
 	)
 }
 
+/** What the account downloads at most, and whether it's the default downloader (first in the priority). */
+function DownloadQuality(props: {
+	service: TargetService
+	connected: boolean
+	quality?: AudioQuality
+	loading: boolean
+	isDefault: boolean
+	priority: DownloadService[]
+}) {
+	const qc = useQueryClient()
+	const makeDefault = useMutation({
+		mutationFn: () =>
+			api.updateSettings({ servicePriority: [props.service, ...props.priority.filter((s) => s !== props.service)] }),
+		onSettled: () => qc.invalidateQueries({ queryKey: ['state'] })
+	})
+	const plans =
+		props.service === 'qobuz'
+			? 'FLAC hasta 24-bit/192 kHz (según el tema)'
+			: 'FLAC 16-bit/44.1 kHz con HiFi, MP3 320 con Premium, MP3 128 gratis'
+
+	if (!props.connected) return <p className="text-xs text-zinc-500">Al conectarla descarga en {plans}.</p>
+	return (
+		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+			<span>
+				Descarga hasta{' '}
+				{props.quality ? (
+					<span className={cx('font-medium', qualityTone(props.quality))}>{qualityLabel(props.quality)}</span>
+				) : props.loading ? (
+					'…'
+				) : (
+					<span title={plans}>calidad desconocida</span>
+				)}
+				{props.service === 'qobuz' && props.quality?.lossless && ' (según el tema)'}
+			</span>
+			{props.isDefault ? (
+				<span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-200">Descargador predeterminado</span>
+			) : (
+				<button
+					type="button"
+					className="underline hover:text-zinc-100 disabled:opacity-40"
+					disabled={makeDefault.isPending}
+					onClick={() => makeDefault.mutate()}
+				>
+					Usar como predeterminado
+				</button>
+			)}
+		</div>
+	)
+}
+
 function AccountCard({
 	account,
 	role,
+	download,
 	connectedExtra,
 	children
 }: {
 	account: AccountInfo
 	role: string
+	/** What this account can download, and at what quality. */
+	download?: ReactNode
 	/** Extra controls shown while connected (e.g. switching Google account). */
 	connectedExtra?: ReactNode
 	children: ReactNode
@@ -83,6 +175,7 @@ function AccountCard({
 					<span className="text-xs text-muted">No conectado</span>
 				)}
 			</header>
+			{download && <div className="mt-3 border-t border-line/60 pt-3">{download}</div>}
 			{account.status === 'error' && account.error && (
 				<p className="mt-3 rounded-md bg-red-950/40 px-3 py-2 text-xs whitespace-pre-wrap text-red-300">{account.error}</p>
 			)}
@@ -116,140 +209,55 @@ function QobuzForm({ browserLogin }: { browserLogin: boolean }) {
 		mutationFn: api.connectQobuzInBrowser,
 		onSettled: () => qc.invalidateQueries({ queryKey: ['state'] })
 	})
-	const [showManual, setShowManual] = useState(!browserLogin)
-	if (browserLogin && !showManual) {
-		return (
-			<div className="space-y-3">
-				<p className="text-xs text-muted">
-					Se abrirá play.qobuz.com en una ventana. Inicia sesión como siempre (con email y contraseña es lo más
-					fiable; Google a veces bloquea su login dentro de apps). Kemix toma la sesión y cierra la ventana solo.
-				</p>
-				<ErrorText error={inBrowser.error} />
-				<div className="flex items-center gap-3">
-					<Button variant="primary" onClick={() => inBrowser.mutate()} disabled={inBrowser.isPending}>
-						{inBrowser.isPending ? 'Esperando a que inicies sesión…' : 'Iniciar sesión en Qobuz'}
-					</Button>
-					<button type="button" className="text-xs text-muted underline" onClick={() => setShowManual(true)}>
-						Otros métodos
-					</button>
-				</div>
-			</div>
-		)
+	if (!browserLogin) {
+		return <p className="text-xs text-muted">Qobuz se conecta desde la app de escritorio de Kemix.</p>
 	}
-	return <QobuzManualForm onBack={browserLogin ? () => setShowManual(false) : undefined} />
+	return (
+		<div className="space-y-3">
+			<p className="text-xs text-muted">
+				Se abrirá play.qobuz.com en una ventana. Inicia sesión como siempre (con email y contraseña es lo más fiable;
+				Google a veces bloquea su login dentro de apps). Kemix toma la sesión y cierra la ventana solo.
+			</p>
+			<ErrorText error={inBrowser.error} />
+			<Button variant="primary" onClick={() => inBrowser.mutate()} disabled={inBrowser.isPending}>
+				{inBrowser.isPending ? 'Esperando a que inicies sesión…' : 'Iniciar sesión en Qobuz'}
+			</Button>
+		</div>
+	)
 }
 
-function QobuzManualForm({ onBack }: { onBack?: () => void }) {
-	const [mode, setMode] = useState<'password' | 'session'>('password')
-	const [email, setEmail] = useState('')
-	const [password, setPassword] = useState('')
-	const [session, setSession] = useState('')
-	const [appId, setAppId] = useState('')
-	const [appSecret, setAppSecret] = useState('')
-	const [advanced, setAdvanced] = useState(false)
-	const connect = useConnect(api.connectQobuz)
-	const submit = (e: FormEvent) => {
-		e.preventDefault()
-		const app = { appId: appId || undefined, appSecret: appSecret || undefined }
-		connect.mutate(mode === 'session' ? { session, ...app } : { email, password, ...app })
-	}
-	const ready = mode === 'session' ? session.trim().length >= 20 : !!email && !!password
+const COOKIES_EXTENSION_URL = 'https://github.com/kairi003/Get-cookies.txt-LOCALLY'
+
+/** Step-by-step guide to export cookies.txt from the browser and use it to connect. */
+function CookiesGuide({ site }: { site: string }) {
 	return (
-		<form className="space-y-3" onSubmit={submit}>
-			<div className="flex gap-1 rounded-md bg-ink p-1 text-xs">
-				{(
-					[
-						['password', 'Email y contraseña'],
-						['session', 'Sesión del navegador']
-					] as const
-				).map(([value, label]) => (
-					<button
-						key={value}
-						type="button"
-						onClick={() => setMode(value)}
-						className={`flex-1 rounded px-2 py-1 ${mode === value ? 'bg-zinc-800 text-zinc-100' : 'text-muted hover:text-zinc-200'}`}
-					>
-						{label}
-					</button>
-				))}
-			</div>
-			{mode === 'password' ? (
-				<>
-					<Field label="Email">
-						<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-					</Field>
-					<Field label="Contraseña">
-						<Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-					</Field>
-				</>
-			) : (
-				<>
-					<ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-						<li>
-							Abre <b>play.qobuz.com</b> con tu sesión iniciada, pulsa <b>F12</b> y ve a la pestaña <b>Network</b> (Red).
-						</li>
-						<li>
-							Recarga la página (F5) y escribe <code>api.json</code> en el filtro de arriba.
-						</li>
-						<li>
-							Haz clic en cualquier petición de la lista → <b>Headers</b> → baja a <b>Request Headers</b> y busca{' '}
-							<code>x-user-auth-token</code>.
-						</li>
-						<li>
-							Copia su valor (o la petición entera con clic derecho → Copy → Copy as cURL) y pégalo aquí.
-						</li>
-					</ol>
-					<Field label="Sesión de Qobuz">
-						<textarea
-							value={session}
-							onChange={(e) => setSession(e.target.value)}
-							rows={4}
-							placeholder="Valor de x-user-auth-token, o la petición copiada como cURL"
-							className="w-full rounded-md border border-line bg-ink px-3 py-1.5 font-mono text-xs focus:border-accent/60 focus:outline-none"
-						/>
-					</Field>
-					<label className="inline-block cursor-pointer rounded-md border border-line px-3 py-1.5 text-sm hover:bg-zinc-800">
-						Cargar archivo…
-						<input
-							type="file"
-							accept=".txt,.json"
-							className="hidden"
-							onChange={async (e) => {
-								const file = e.target.files?.[0]
-								if (file) setSession(await file.text())
-								e.target.value = ''
-							}}
-						/>
-					</label>
-				</>
-			)}
-			<div>
-				<button type="button" className="text-xs text-muted underline" onClick={() => setAdvanced((a) => !a)}>
-					{advanced ? 'Ocultar opciones avanzadas' : 'Opciones avanzadas'}
-				</button>
-			</div>
-			{advanced && (
-				<div className="space-y-3 rounded-md border border-line p-3">
-					<Field label="App ID" hint="Vacío = se obtiene automáticamente de play.qobuz.com">
-						<Input value={appId} onChange={(e) => setAppId(e.target.value)} />
-					</Field>
-					<Field label="App secret">
-						<Input value={appSecret} onChange={(e) => setAppSecret(e.target.value)} />
-					</Field>
-				</div>
-			)}
-			<ErrorText error={connect.error} />
-			<div className="flex items-center gap-3">
-				<Button variant="primary" type="submit" disabled={connect.isPending || !ready}>
-					{connect.isPending ? 'Conectando…' : 'Conectar Qobuz'}
-				</Button>
-				{onBack && (
-					<button type="button" className="text-xs text-muted underline" onClick={onBack}>
-						Volver a iniciar sesión en ventana
-					</button>
-				)}
-			</div>
-		</form>
+		<details className="rounded-md border border-line bg-ink/40 px-3 py-2 text-xs text-muted">
+			<summary className="cursor-pointer text-zinc-300 select-none">¿Cómo obtengo el archivo cookies.txt?</summary>
+			<ol className="mt-2 list-decimal space-y-1.5 pl-5">
+				<li>
+					Instala en Chrome, Edge o Firefox la extensión{' '}
+					<a className="text-accent underline" href={COOKIES_EXTENSION_URL} target="_blank" rel="noreferrer">
+						Get cookies.txt LOCALLY ↗
+					</a>{' '}
+					(los enlaces a cada tienda están en esa página). Usa la versión <b>LOCALLY</b>: no envía tus cookies a ningún
+					servidor.
+				</li>
+				<li>
+					Abre <b>{site}</b> en ese navegador e inicia sesión con tu cuenta.
+				</li>
+				<li>
+					Con esa pestaña abierta, pulsa el icono de la extensión (en el menú de extensiones 🧩) y luego <b>Export</b>.
+					Se descarga un archivo <code>.txt</code>.
+				</li>
+				<li>
+					Aquí, pulsa <b>Cargar archivo…</b>, elige ese archivo y después <b>Conectar</b>.
+				</li>
+				<li>
+					El archivo da acceso a tu cuenta: bórralo cuando termines y no lo compartas. Si la sesión caduca, repite estos
+					pasos.
+				</li>
+			</ol>
+		</details>
 	)
 }
 
@@ -265,25 +273,58 @@ function DeezerForm() {
 			}}
 		>
 			<Field
-				label="Cookie ARL"
+				label="Cookies de deezer.com"
 				hint={
 					<>
-						Inicia sesión en deezer.com → DevTools (F12) → Application → Cookies → <code>arl</code>. Caduca cada pocos meses.
+						Recomendado: con la sesión iniciada en deezer.com, exporta las cookies con una extensión (p. ej. Get
+						cookies.txt) y carga el archivo; Kemix toma la cookie <code>arl</code> sola. También puedes pegar solo el
+						valor de <code>arl</code> (DevTools → Application → Cookies). Caduca cada pocos meses.
 					</>
 				}
 			>
-				<Input type="password" value={arl} onChange={(e) => setArl(e.target.value)} />
+				<textarea
+					value={arl}
+					onChange={(e) => setArl(e.target.value)}
+					rows={3}
+					placeholder="Pega aquí el contenido de cookies.txt o el valor de arl"
+					className="w-full rounded-md border border-line bg-ink px-3 py-1.5 font-mono text-xs focus:border-accent/60 focus:outline-none"
+				/>
 			</Field>
+			<CookiesGuide site="www.deezer.com" />
 			<ErrorText error={connect.error} />
-			<Button variant="primary" type="submit" disabled={connect.isPending || arl.trim().length < 50}>
-				{connect.isPending ? 'Conectando…' : 'Conectar Deezer'}
-			</Button>
+			<div className="flex items-center gap-2">
+				<Button variant="primary" type="submit" disabled={connect.isPending || arl.trim().length < 50}>
+					{connect.isPending ? 'Conectando…' : 'Conectar Deezer'}
+				</Button>
+				<label className="cursor-pointer rounded-md border border-line px-3 py-1.5 text-sm hover:bg-zinc-800">
+					Cargar archivo…
+					<input
+						type="file"
+						accept=".txt,.json"
+						className="hidden"
+						onChange={async (e) => {
+							const file = e.target.files?.[0]
+							if (file) setArl(await file.text())
+							e.target.value = ''
+						}}
+					/>
+				</label>
+			</div>
 		</form>
 	)
 }
 
-function SpotifyForm({ redirectUri, clientId: savedClientId }: { redirectUri: string; clientId: string }) {
+function SpotifyForm({
+	browserLogin,
+	redirectUri,
+	clientId: savedClientId
+}: {
+	browserLogin: boolean
+	redirectUri: string
+	clientId: string
+}) {
 	const qc = useQueryClient()
+	const [mode, setMode] = useState<'web' | 'api'>(browserLogin ? 'web' : 'api')
 	const [clientId, setClientId] = useState(savedClientId)
 	const start = useMutation({
 		mutationFn: async () => {
@@ -295,25 +336,74 @@ function SpotifyForm({ redirectUri, clientId: savedClientId }: { redirectUri: st
 			window.open(url, '_blank')
 		}
 	})
+	const web = useMutation({
+		mutationFn: api.connectSpotifyWeb,
+		onSettled: () => qc.invalidateQueries({ queryKey: ['state'] })
+	})
 	return (
 		<div className="space-y-3">
-			<ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-				<li>
-					Crea una app en <span className="text-zinc-300">developer.spotify.com/dashboard</span> (tipo Web API).
-				</li>
-				<li>
-					Añade este Redirect URI: <code className="text-zinc-300 select-all">{redirectUri}</code>
-				</li>
-				<li>Copia el Client ID aquí y pulsa Conectar; se abrirá el navegador para autorizar.</li>
-			</ol>
-			<Field label="Client ID">
-				<Input value={clientId} onChange={(e) => setClientId(e.target.value.trim())} />
-			</Field>
-			<ErrorText error={start.error} />
-			<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || !clientId}>
-				Conectar Spotify
-			</Button>
+			{browserLogin && (
+				<div className="flex gap-1 rounded-md bg-ink p-1 text-xs">
+					{(
+						[
+							['web', 'Cualquier cuenta (sin Premium)'],
+							['api', 'Premium (Client ID)']
+						] as const
+					).map(([value, label]) => (
+						<button
+							key={value}
+							type="button"
+							onClick={() => setMode(value)}
+							className={`flex-1 rounded px-2 py-1 ${mode === value ? 'bg-zinc-800 text-zinc-100' : 'text-muted hover:text-zinc-200'}`}
+						>
+							{label}
+						</button>
+					))}
+				</div>
+			)}
+			{mode === 'web' ? (
+				<>
+					<p className="text-xs text-muted">
+						Se abrirá open.spotify.com en una ventana: inicia sesión como siempre. Después la ventana se oculta unos segundos
+						mientras Kemix lee tu biblioteca. Usa la sesión del reproductor web, así que funciona con cuentas gratis: carga
+						tus playlists y tus Me gusta y permite buscar, pero no crear playlists en Spotify.
+					</p>
+					<ErrorText error={web.error} />
+					<Button variant="primary" onClick={() => web.mutate()} disabled={web.isPending}>
+						{web.isPending ? 'Esperando a que inicies sesión…' : 'Iniciar sesión en Spotify'}
+					</Button>
+				</>
+			) : (
+				<>
+					<p className="rounded-md bg-amber-950/30 px-3 py-2 text-xs text-amber-300/90">
+						Spotify solo abre su Web API a cuentas <b>Premium</b>. Si tu cuenta es gratis, Kemix te avisará al conectar
+						{browserLogin ? '; usa «Cualquier cuenta (sin Premium)»' : ''}.
+					</p>
+					<SpotifyApiSteps redirectUri={redirectUri} />
+					<Field label="Client ID">
+						<Input value={clientId} onChange={(e) => setClientId(e.target.value.trim())} />
+					</Field>
+					<ErrorText error={start.error} />
+					<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || !clientId}>
+						Conectar Spotify
+					</Button>
+				</>
+			)}
 		</div>
+	)
+}
+
+function SpotifyApiSteps({ redirectUri }: { redirectUri: string }) {
+	return (
+		<ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+			<li>
+				Crea una app en <span className="text-zinc-300">developer.spotify.com/dashboard</span> (tipo Web API).
+			</li>
+			<li>
+				Añade este Redirect URI: <code className="text-zinc-300 select-all">{redirectUri}</code>
+			</li>
+			<li>Copia el Client ID aquí y pulsa Conectar; se abrirá el navegador para autorizar.</li>
+		</ol>
 	)
 }
 
@@ -359,6 +449,7 @@ function YtMusicForm() {
 					className="w-full rounded-md border border-line bg-ink px-3 py-1.5 font-mono text-xs focus:border-accent/60 focus:outline-none"
 				/>
 			</Field>
+			<CookiesGuide site="music.youtube.com" />
 			<ErrorText error={connect.error} />
 			<div className="flex items-center gap-2">
 				<Button variant="primary" type="submit" disabled={connect.isPending || cookie.trim().length < 20}>

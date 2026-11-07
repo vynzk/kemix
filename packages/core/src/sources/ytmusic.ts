@@ -211,20 +211,7 @@ export class YtMusicSource implements SourceConnector {
 		let page = await yt.music.getPlaylist(playlistId)
 		const out: SourceTrack[] = []
 		const take = () => {
-			for (const node of page.items ?? []) {
-				if (!node.is(YTNodes.MusicResponsiveListItem)) continue
-				const item = node
-				if (!item.id || !item.title) continue
-				out.push({
-					sourceId: item.id,
-					title: item.title,
-					artists: (item.artists ?? item.authors ?? []).map((a) => a.name),
-					album: item.album?.name,
-					durationMs: item.duration?.seconds ? item.duration.seconds * 1000 : undefined,
-					coverUrl: item.thumbnail?.contents?.[0]?.url,
-					url: `https://music.youtube.com/watch?v=${item.id}`
-				})
-			}
+			for (const node of page.items ?? []) if (node.is(YTNodes.MusicResponsiveListItem)) out.push(...toTrack(node))
 		}
 		take()
 		while (page.has_continuation) {
@@ -233,4 +220,55 @@ export class YtMusicSource implements SourceConnector {
 		}
 		return out
 	}
+
+	async search(query: string, limit: number): Promise<SourceTrack[]> {
+		const yt = await this.#client()
+		const res = await yt.music.search(query, { type: 'song' })
+		// Read every list item rather than the "Songs" shelf, whose title is localized.
+		const items = res.page.contents_memo?.getType(YTNodes.MusicResponsiveListItem) ?? []
+		return items
+			.filter((i) => i.item_type === 'song' || i.item_type === 'video')
+			.flatMap(toTrack)
+			.slice(0, limit)
+	}
+
+	async createPlaylist(name: string, trackIds: string[]): Promise<string> {
+		const yt = await this.#client()
+		// Same call music.youtube.com makes (and the same client the library is read with). youtubei.js's
+		// playlist.create goes through the plain YouTube client instead.
+		const res = await yt.actions.execute('/playlist/create', {
+			client: 'YTMUSIC',
+			title: name,
+			description: 'Creada con Kemix',
+			privacyStatus: 'PRIVATE',
+			videoIds: trackIds
+		})
+		const id = (res.data as { playlistId?: string } | undefined)?.playlistId
+		if (!res.success || !id) throw new Error(`YouTube Music no creó la playlist (código ${res.status_code})`)
+		// Make sure it really landed in this account before telling the user it did.
+		try {
+			await yt.music.getPlaylist(id)
+		} catch (err) {
+			throw new Error(
+				`YouTube Music respondió que creó la playlist (${id}), pero no aparece en esta cuenta: ` +
+					(err instanceof Error ? err.message : String(err))
+			)
+		}
+		return id
+	}
+}
+
+function toTrack(item: InstanceType<typeof YTNodes.MusicResponsiveListItem>): SourceTrack[] {
+	if (!item.id || !item.title) return []
+	return [
+		{
+			sourceId: item.id,
+			title: item.title,
+			artists: (item.artists ?? item.authors ?? []).map((a) => a.name),
+			album: item.album?.name,
+			durationMs: item.duration?.seconds ? item.duration.seconds * 1000 : undefined,
+			coverUrl: item.thumbnail?.contents?.[0]?.url,
+			url: `https://music.youtube.com/watch?v=${item.id}`
+		}
+	]
 }

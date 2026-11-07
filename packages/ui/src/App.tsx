@@ -3,13 +3,15 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from './lib/api'
 import { useLiveEvents } from './lib/events'
 import { cx } from './lib/format'
+import { PlayerBar } from './components/Player'
 import { LibraryPage } from './pages/LibraryPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SearchPage } from './pages/SearchPage'
 
-type Page = 'library' | 'review' | 'downloads' | 'accounts' | 'settings'
+type Page = 'library' | 'search' | 'review' | 'downloads' | 'accounts' | 'settings'
 
 export function App() {
 	const sync = useLiveEvents()
@@ -22,11 +24,14 @@ export function App() {
 	const active = library.data?.playlists.reduce((n, p) => n + p.downloads.active, 0) ?? 0
 
 	const [page, setPage] = useState<Page | null>(null)
+	// Bumped to reopen the library straight on a playlist (e.g. one just created from Buscar).
+	const [openPlaylist, setOpenPlaylist] = useState<{ id: number; nonce: number } | null>(null)
 	// First run: nothing connected → start on Accounts.
 	const current: Page = page ?? (state.data && connected === 0 ? 'accounts' : 'library')
 
 	const nav: { id: Page; label: string; badge?: number; alert?: boolean }[] = [
 		{ id: 'library', label: 'Biblioteca' },
+		{ id: 'search', label: 'Buscar' },
 		{ id: 'review', label: 'Revisión', badge: review.data?.length },
 		{ id: 'downloads', label: 'Descargas', badge: active || undefined },
 		{ id: 'accounts', label: 'Cuentas', alert: accountErrors > 0 },
@@ -69,13 +74,32 @@ export function App() {
 					</p>
 				</div>
 			</nav>
-			<main className="min-w-0 flex-1 overflow-y-auto">
-				{current === 'library' && <LibraryPage syncing={sync.running} onGoToAccounts={() => setPage('accounts')} />}
-				{current === 'review' && <ReviewPage />}
-				{current === 'downloads' && <DownloadsPage />}
-				{current === 'accounts' && <AccountsPage />}
-				{current === 'settings' && <SettingsPage />}
-			</main>
+			<div className="flex min-w-0 flex-1 flex-col">
+				<main className="min-h-0 flex-1 overflow-y-auto">
+					{current === 'library' && (
+						<LibraryPage
+							key={openPlaylist?.nonce ?? 0}
+							initialPlaylist={openPlaylist?.id ?? null}
+							syncing={sync.running}
+							onGoToAccounts={() => setPage('accounts')}
+						/>
+					)}
+					{current === 'search' && (
+						<SearchPage
+							onGoToAccounts={() => setPage('accounts')}
+							onOpenPlaylist={(id) => {
+								setOpenPlaylist({ id, nonce: Date.now() })
+								setPage('library')
+							}}
+						/>
+					)}
+					{current === 'review' && <ReviewPage />}
+					{current === 'downloads' && <DownloadsPage />}
+					{current === 'accounts' && <AccountsPage />}
+					{current === 'settings' && <SettingsPage />}
+				</main>
+				<PlayerBar />
+			</div>
 		</div>
 	)
 }

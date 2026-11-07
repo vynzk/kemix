@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getCookie, normalizeCookieInput } from '../src/sources/cookies'
+import { extractDeezerArl } from '../src/accounts'
 
 const D = 'music.youtube.com'
 const future = Math.floor(Date.now() / 1000) + 86400 * 365
@@ -52,5 +53,31 @@ describe('normalizeCookieInput', () => {
 
 	it('returns empty for empty input', () => {
 		expect(normalizeCookieInput('   ', D)).toBe('')
+	})
+})
+
+describe('extractDeezerArl', () => {
+	const arl = 'a1b2c3'.repeat(32)
+
+	it('accepts the bare value', () => {
+		expect(extractDeezerArl(`  ${arl}\n`)).toBe(arl)
+	})
+
+	it('pulls arl out of a cookies.txt export', () => {
+		const txt = [
+			'# Netscape HTTP Cookie File',
+			`.deezer.com\tTRUE\t/\tTRUE\t${future}\tsid\tfrxyz`,
+			`.deezer.com\tTRUE\t/\tTRUE\t${future}\tarl\t${arl}`,
+			`.google.com\tTRUE\t/\tTRUE\t${future}\tarl\tnope`
+		].join('\r\n')
+		expect(extractDeezerArl(txt)).toBe(arl)
+	})
+
+	it('pulls arl out of a cookie header', () => {
+		expect(extractDeezerArl(`cookie: sid=1; arl=${arl}; dzr_uniq_id=2`)).toBe(arl)
+	})
+
+	it('explains when the export has no arl', () => {
+		expect(() => extractDeezerArl(`.deezer.com\tTRUE\t/\tTRUE\t${future}\tsid\tfrxyz`)).toThrow(/arl/)
 	})
 })

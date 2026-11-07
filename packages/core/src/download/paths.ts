@@ -25,7 +25,8 @@ const MIME_EXT: Record<string, string> = {
 	'audio/mp3': 'mp3',
 	'audio/mp4': 'm4a',
 	'audio/aac': 'm4a',
-	'audio/ogg': 'ogg'
+	'audio/ogg': 'ogg',
+	'audio/webm': 'webm'
 }
 
 export function extensionFor(mimeType: string): string {

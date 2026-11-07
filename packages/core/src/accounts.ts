@@ -2,7 +2,7 @@ import type { Db } from './db'
 import type { EventBus } from './events'
 import type { SecretStore } from './secrets'
 import type { SettingsStore } from './settings'
-import type { AccountInfo, AccountStatus, SourceService, TargetService } from './types'
+import type { AccountInfo, AccountStatus, AudioQuality, DownloadService, SourceService, TargetService } from './types'
 import { SOURCE_SERVICES } from './types'
 import type { SourceConnector } from './sources/types'
 import { QobuzApi, QobuzSource, scrapeQobuzAppCredentials, type QobuzCredentials } from './sources/qobuz'
@@ -14,14 +14,27 @@ import {
 	exchangeSpotifyCode,
 	type SpotifyTokens
 } from './sources/spotify'
+import { SpotifyWebSource, type SpotifyWebSession } from './sources/spotify-web'
 import { YtMusicSource, type YtMusicAccount } from './sources/ytmusic'
 import { getCookie, normalizeCookieInput } from './sources/cookies'
+import { YouTube } from './sources/youtube'
 import { createDeezerDownloader, createQobuzDownloader, type Downloader } from './download/lucida-adapter'
 import { errorMessage, now } from './util'
 
 interface DeezerSecret {
 	arl: string
 }
+/** OAuth tokens from the user's own app (Premium), or the web player session (any account). */
+type SpotifySecret = (SpotifyTokens & { mode?: 'api' }) | ({ mode: 'web' } & Partial<SpotifyWebSession>)
+
+/** Desktop only: sign in on open.spotify.com in a window and use the web player's token. */
+export interface SpotifyWebLogin {
+	/** interactive: show the window so the user can sign in; otherwise reuse the saved session in a hidden window. */
+	token(interactive: boolean): Promise<SpotifyWebSession>
+	/** Forget the saved open.spotify.com session. */
+	logout(): Promise<void>
+}
+
 interface YtMusicSecret {
 	cookie: string
 	/** Which signed-in Google account in the cookies to use (authuser). Missing in older connections = 0. */
@@ -52,17 +65,34 @@ function prepareYtCookie(raw: string): string {
 	return cookie
 }
 
+/** Accept the bare `arl` value or a cookie export (cookies.txt, header, JSON) and pull `arl` out of it. */
+export function extractDeezerArl(raw: string): string {
+	const input = raw.replace(/^﻿/, '').trim()
+	if (!/[=;\t\n[]/.test(input)) return input
+	const arl = getCookie(normalizeCookieInput(input, 'www.deezer.com'), 'arl')
+	if (!arl) {
+		throw new Error(
+			'No encontré la cookie arl de Deezer. Exporta las cookies con la sesión iniciada en deezer.com (p. ej. con Get cookies.txt).'
+		)
+	}
+	return arl.trim()
+}
+
 export class Accounts {
 	#sources = new Map<SourceService, SourceConnector>()
 	#downloaders = new Map<TargetService, Promise<Downloader>>()
 	#pendingSpotify = new Map<string, { verifier: string; clientId: string; redirectUri: string }>()
+	/** Plain YouTube: preview player and lossy fallback downloads. Needs no account. */
+	readonly youtube: YouTube
 
 	constructor(
 		private db: Db,
 		private secrets: SecretStore,
 		private settings: SettingsStore,
 		private events: EventBus
-	) {}
+	) {
+		this.youtube = new YouTube(() => this.settings.get().ytDlpPath)
+	}
 
 	list(): AccountInfo[] {
 		const rows = this.db.prepare('SELECT service, display_name, email, status, error FROM accounts').all() as {
@@ -158,6 +188,9 @@ export class Accounts {
 	}
 
 	disconnect(service: SourceService) {
+		if (service === 'spotify' && this.secrets.get<SpotifySecret>('spotify')?.mode === 'web') {
+			void this.#spotifyWeb?.logout().catch(() => {})
+		}
 		this.secrets.delete(service)
 		this.#sources.delete(service)
 		if (service === 'qobuz' || service === 'deezer') this.#downloaders.delete(service)
@@ -167,44 +200,22 @@ export class Accounts {
 
 	// ---- Qobuz ----
 
-	async connectQobuz(input: {
-		email?: string
-		password?: string
-		/** Anything holding an existing session: cookies.txt, a request copied as cURL, the `localuser` JSON, a token. */
-		session?: string
-		appId?: string
-		appSecret?: string
-	}) {
+	/** Connect with the session captured by the desktop app's play.qobuz.com login window. */
+	async connectQobuz(capturedSession: string) {
 		try {
-			const session = input.session?.trim() ? parseQobuzSession(input.session) : null
-			if (session && !session.tokens.length) {
-				throw new Error(
-					'No encontré un token de Qobuz en lo que pegaste. Si usaste cookies.txt, puede que Qobuz no guarde la sesión ' +
-						'en cookies: copia una petición del reproductor como cURL (ver instrucciones).'
-				)
+			const session = parseQobuzSession(capturedSession)
+			if (!session.tokens.length) {
+				throw new Error('La ventana de Qobuz no entregó un token válido. Vuelve a intentarlo y espera a que cargue el reproductor.')
 			}
-			if (!session && (!input.email?.trim() || !input.password)) throw new Error('Falta el email o la contraseña')
 
-			// App id priority: typed by the user > taken from the pasted session (the one that issued the token) >
-			// scraped from the web player bundle. A token is only valid with the app id that issued it.
-			let appId = input.appId?.trim() || session?.appId
-			let appIdSource = input.appId?.trim() ? 'escrito a mano' : session?.appId ? 'de la sesión pegada' : ''
-			let secrets = input.appSecret?.trim() ? [input.appSecret.trim()] : []
-			if (!appId || !secrets.length) {
-				const scraped = await step('Obtener el app id de play.qobuz.com', scrapeQobuzAppCredentials)
-				if (!appId) {
-					appId = scraped.appId
-					appIdSource = 'extraído de play.qobuz.com'
-				}
-				// The scraped secrets belong to the scraped app id; they're only worth trying for that same id.
-				if (!secrets.length && scraped.appId === appId) secrets = scraped.secrets
-			}
-			const appIdNote = `app id ${appId}, ${appIdSource}`
+			// A token is only valid with the app id that issued it: prefer the one seen in the window's traffic.
+			const scraped = await step('Obtener el app id de play.qobuz.com', scrapeQobuzAppCredentials)
+			const appId = session.appId ?? scraped.appId
+			// The scraped secrets belong to the scraped app id; they're only worth trying for that same id.
+			const secrets = scraped.appId === appId ? scraped.secrets : []
 
 			const api = new QobuzApi({ appId })
 			const user = await step('Iniciar sesión en Qobuz', async () => {
-				if (!session) return api.login({ email: input.email!.trim(), password: input.password! })
-				// A cookie export can yield several candidates: keep the first token Qobuz accepts.
 				let lastError: unknown
 				for (const token of session.tokens) {
 					try {
@@ -213,34 +224,13 @@ export class Accounts {
 						lastError = err
 					}
 				}
-				const tried = session.sources.join(', ')
-				const onlyCookies = session.sources.every((src) => src.startsWith('cookie'))
-				throw new Error(
-					`Qobuz no aceptó ${session.tokens.length === 1 ? 'el token' : `ninguno de los ${session.tokens.length} tokens`} ` +
-						`que encontré (${tried}; ${appIdNote}): ${errorMessage(lastError)}` +
-						(onlyCookies
-							? '\n\nEsas cookies no son la sesión del reproductor: Qobuz no la guarda en cookies. ' +
-								'Copia el header x-user-auth-token de una petición (ver instrucciones).'
-							: '')
-				)
-			}).catch((err) => {
-				if (!session && err instanceof Error && /\b401\b/.test(err.message)) {
-					throw new Error(
-						`${err.message} (${appIdNote})
-
-Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Apple o ` +
-							'Facebook no tienes contraseña de Qobuz: usa "Entrar con una sesión del navegador".'
-					)
-				}
-				throw err
+				throw new Error(`Qobuz no aceptó la sesión (app id ${appId}): ${errorMessage(lastError)}`)
 			})
 
 			const appSecret = await step('Validar el app secret', async () => {
 				for (const s of secrets) if (await api.testSecret(s)) return s
 				throw new Error(
-					secrets.length
-						? `Ningún app secret de Qobuz es válido para el ${appIdNote}; pega uno a mano en Opciones avanzadas`
-						: `El ${appIdNote} no coincide con el del reproductor web actual, así que no hay secret para él; pégalo en Opciones avanzadas`
+					`El app id ${appId} no coincide con el del reproductor web actual de Qobuz. Vuelve a intentarlo; si sigue fallando, Qobuz cambió su web.`
 				)
 			})
 
@@ -250,7 +240,7 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 				token: user.token,
 				userId: user.userId,
 				userName: user.userName,
-				email: user.email ?? input.email?.trim()
+				email: user.email
 			}
 			this.secrets.set('qobuz', creds)
 			this.#sources.delete('qobuz')
@@ -266,7 +256,7 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 
 	async connectDeezer(input: { arl: string }) {
 		try {
-			const arl = input.arl.trim()
+			const arl = extractDeezerArl(input.arl)
 			const gw = new DeezerGw(arl)
 			const data = await gw.init()
 			this.secrets.set('deezer', { arl } satisfies DeezerSecret)
@@ -345,9 +335,15 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 		this.#pendingSpotify.delete(state)
 		try {
 			const tokens = await exchangeSpotifyCode({ code, ...pending })
-			this.secrets.set('spotify', tokens)
-			const src = this.#spotify(tokens)
+			const src = new SpotifySource(tokens, (t) => this.secrets.set('spotify', t))
 			const me = await src.me()
+			if (me.premium === false) {
+				throw new Error(
+					`La cuenta ${me.email ?? me.displayName} no es Premium y Spotify solo abre su Web API a cuentas Premium. ` +
+						'Conecta con «Iniciar sesión en Spotify (sin Premium)»: carga tus playlists igual.'
+				)
+			}
+			this.secrets.set('spotify', tokens)
 			this.#sources.set('spotify', src)
 			this.#setStatus('spotify', 'connected', { name: me.displayName, email: me.email })
 		} catch (err) {
@@ -356,8 +352,51 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 		}
 	}
 
-	#spotify(tokens: SpotifyTokens) {
-		return new SpotifySource(tokens, (t) => this.secrets.set('spotify', t))
+	#spotifyWeb?: SpotifyWebLogin
+
+	setSpotifyWebLogin(login: SpotifyWebLogin) {
+		this.#spotifyWeb = login
+	}
+
+	/** Connect any Spotify account (Premium or not) through the open.spotify.com web player session. */
+	async connectSpotifyWeb() {
+		const login = this.#spotifyWeb
+		if (!login) throw new Error('Iniciar sesión en Spotify en una ventana solo está disponible en la app de escritorio')
+		try {
+			const session = await login.token(true)
+			if (!session.ops.libraryV3) {
+				throw new Error('No se pudo leer tu biblioteca desde el reproductor web de Spotify. Vuelve a intentarlo.')
+			}
+			const src = this.#spotifyWebSource(session)
+			const me = await src.identity()
+			this.secrets.set('spotify', { mode: 'web', ...session } satisfies SpotifySecret)
+			this.#sources.set('spotify', src)
+			this.#setStatus('spotify', 'connected', { name: `${me.name ?? 'Spotify'} (reproductor web)` })
+		} catch (err) {
+			this.#setStatus('spotify', 'error', { error: errorMessage(err) })
+			throw err
+		}
+	}
+
+	#spotifyWebSource(initial: SpotifyWebSession | undefined) {
+		return new SpotifyWebSource(
+			initial,
+			async () => {
+				if (!this.#spotifyWeb) throw new Error('La sesión de Spotify sin Premium solo se renueva desde la app de escritorio')
+				try {
+					return await this.#spotifyWeb.token(false)
+				} catch (err) {
+					throw new Error(`La sesión de Spotify expiró: vuelve a iniciar sesión en Cuentas (${errorMessage(err)})`)
+				}
+			},
+			(s) => this.secrets.set('spotify', { mode: 'web', ...s } satisfies SpotifySecret)
+		)
+	}
+
+	#spotify(secret: SpotifySecret): SourceConnector {
+		if (secret.mode !== 'web') return new SpotifySource(secret, (t) => this.secrets.set('spotify', t))
+		const { mode: _mode, ...session } = secret
+		return this.#spotifyWebSource(session.accessToken ? (session as SpotifyWebSession) : undefined)
 	}
 
 	// ---- accessors ----
@@ -378,7 +417,7 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 				break
 			}
 			case 'spotify': {
-				const c = this.secrets.get<SpotifyTokens>('spotify')
+				const c = this.secrets.get<SpotifySecret>('spotify')
 				if (c) src = this.#spotify(c)
 				break
 			}
@@ -393,7 +432,27 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 		return src
 	}
 
-	downloader(service: TargetService): Promise<Downloader> {
+	/**
+	 * Best quality each download service gives with the connected account. Missing = not connected or the account
+	 * couldn't be read. YouTube needs no account (it's the on-request lossy fallback).
+	 */
+	async downloadQualities(): Promise<Partial<Record<DownloadService, AudioQuality>>> {
+		const out: Partial<Record<DownloadService, AudioQuality>> = {}
+		await Promise.all(
+			(['qobuz', 'deezer', 'youtube'] as const).map(async (service) => {
+				if (service !== 'youtube' && !this.isConnected(service)) return
+				try {
+					out[service] = await (await this.downloader(service)).accountQuality()
+				} catch {
+					// shown as unknown
+				}
+			})
+		)
+		return out
+	}
+
+	downloader(service: DownloadService): Promise<Downloader> {
+		if (service === 'youtube') return Promise.resolve(this.youtube.downloader())
 		let d = this.#downloaders.get(service)
 		if (!d) {
 			d = this.#createDownloader(service)
@@ -418,6 +477,10 @@ Revisa el email y la contraseña. Si creaste la cuenta de Qobuz con Google, Appl
 	async downloaders(): Promise<Downloader[]> {
 		const out: Downloader[] = []
 		for (const service of this.settings.get().servicePriority) {
+			if (service === 'youtube') {
+				out.push(this.youtube.downloader())
+				continue
+			}
 			if (!this.isConnected(service)) continue
 			try {
 				out.push(await this.downloader(service))

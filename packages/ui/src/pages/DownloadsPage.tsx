@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
-import { bytes } from '../lib/format'
+import { bytes, cx, qualityLabel, qualityTone } from '../lib/format'
 import { Button, Empty, ErrorText, PageHeader, StatusPill } from '../components/ui'
 
 export function DownloadsPage() {
@@ -61,6 +61,14 @@ export function DownloadsPage() {
 													{r.totalBytes ? ` / ${bytes(r.totalBytes)}` : ''}
 												</p>
 											</div>
+										)}
+									</td>
+									<td className="w-44 py-2.5 pr-4 text-right whitespace-nowrap">
+										{r.status === 'done' && r.quality && (
+											<span className={cx('text-xs', qualityTone(r.quality))}>
+												{qualityLabel(r.quality)}
+												{r.service === 'youtube' && <span className="text-zinc-500"> · YouTube</span>}
+											</span>
 										)}
 									</td>
 									<td className="w-28 py-2.5 pr-8 text-right">
