@@ -2,12 +2,17 @@
   "name": "@kemix/desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "Trae tus playlists de Spotify, YouTube Music, Qobuz y Deezer y descárgalas en FLAC",
+  "author": "Vynzk",
+  "homepage": "https://github.com/vynzk/kemix",
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build": "electron-vite build",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
   },
   "dependencies": {
     "@kemix/core": "*",
@@ -19,15 +24,17 @@
     "fastify": "^5.12.8"
   },
   "devDependencies": {
-    "electron": "^45.2.1",
+    "electron": "45.2.1",
     "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0"
   },
   "build": {
     "appId": "app.kemix.desktop",
     "productName": "Kemix",
+    "npmRebuild": false,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*"
@@ -39,11 +46,33 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "executableName": "kemix",
+      "category": "Audio",
+      "maintainer": "Vynzk",
+      "synopsis": "Playlists de Spotify, YouTube Music, Qobuz y Deezer en FLAC",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "build/icon.png",
+          "to": "icon.png"
+        }
+      ]
+    },
+    "deb": {
+      "packageName": "kemix"
     }
   }
 }

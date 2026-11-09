@@ -131,7 +131,7 @@ export interface Settings {
 	concurrency: number
 	autoAcceptThreshold: number
 	spotifyClientId: string
-	/** Path to yt-dlp, used for YouTube downloads. Empty: look for it on the PATH. */
+	/** Path to yt-dlp, used for YouTube downloads. Empty: Kemix's own copy (downloaded on first use), else the PATH. */
 	ytDlpPath: string
 	/** Port the local server listens on (used for the Spotify OAuth redirect). */
 	port: number

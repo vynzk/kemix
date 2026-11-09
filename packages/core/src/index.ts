@@ -18,7 +18,7 @@ export type { DownloadQueue } from './download/queue'
 export type { YtMusicAccount } from './sources/ytmusic'
 
 export interface KemixOptions {
-	/** Directory for the database. */
+	/** Directory for the database and the tools Kemix downloads for itself (yt-dlp). */
 	dataDir: string
 	cipher: Cipher
 }
@@ -38,7 +38,7 @@ export class Kemix {
 		this.db = openDb(path.join(opts.dataDir, 'kemix.db'))
 		this.settings = new SettingsStore(this.db)
 		this.secrets = new SecretStore(this.db, opts.cipher)
-		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events)
+		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, path.join(opts.dataDir, 'bin'))
 		this.library = new Library(this.db, this.accounts, this.events)
 		this.queue = new DownloadQueue(this.db, this.accounts, this.library, this.settings, this.events)
 	}

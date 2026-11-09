@@ -11,8 +11,10 @@ npm run dev        # app de escritorio (Electron + UI con recarga en caliente)
 npm run dev:web    # lo mismo pero en el navegador: servidor en :47800, UI en http://localhost:5180
 npm test           # tests (vitest)
 npm run typecheck
-npm run dist       # instalador de Windows en apps/desktop/release
+npm run dist       # ejecutable para el sistema actual en apps/desktop/release (dist:win / dist:linux)
 ```
+
+Para crear los ejecutables de Windows y Linux (en tu PC o en GitHub Actions), ver [COMPILAR.md](COMPILAR.md).
 
 Los datos (base de datos SQLite y credenciales cifradas con DPAPI) se guardan en `%APPDATA%\@kemix\desktop`.
 Las descargas van a `~/Music/Kemix/<Playlist>/NN - Artista - Título.flac`, con un `.m3u8` por playlist.
@@ -60,8 +62,11 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
 - **Escuchar**: el botón ▶ de cada tema busca el video en YouTube y lo reproduce con el reproductor de YouTube integrado.
 - **YouTube como respaldo**: los temas que no están en Qobuz ni Deezer se pueden bajar desde YouTube, solo si lo pides
   (en la playlist o en Revisión) y con aviso de que no es calidad máxima (AAC ~128 kbps). Usa
-  [yt-dlp](https://github.com/yt-dlp/yt-dlp) si está instalado (`winget install yt-dlp`, o su ruta en Ajustes); sin él
-  se intenta con youtubei.js, pero YouTube bloquea así la mayoría de la música con licencia.
+  [yt-dlp](https://github.com/yt-dlp/yt-dlp): el de Ajustes si se indica una ruta; si no, una copia propia que Kemix
+  baja del release oficial la primera vez (verificada con SHA-256, en `<datos>/bin`, y revisada una vez al día por si
+  hay versión nueva); si eso falla, el del PATH. Como runtime de JavaScript para los desafíos de YouTube se le pasa el
+  propio ejecutable de Kemix (Electron como Node), así que no hace falta instalar nada. Sin yt-dlp se intenta con
+  youtubei.js, pero YouTube bloquea así la mayoría de la música con licencia.
 - **Versión web**: `packages/server/src/standalone.ts` corre todo sin Electron. Variables: `KEMIX_DATA_DIR`,
   `KEMIX_SECRET` (clave de cifrado de credenciales), `KEMIX_TOKEN`, `KEMIX_UI_DIR`, `KEMIX_HOST`, `KEMIX_PORT`.
   Para hacerla multiusuario falta añadir login de usuarios y separar los datos por usuario.

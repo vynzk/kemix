@@ -8,6 +8,13 @@ import { createServer } from '@kemix/server'
 const DEV_UI_URL = 'http://localhost:5180'
 const isDev = !app.isPackaged
 
+/** Window/taskbar icon. Packaged Windows builds take it from the .exe; Linux and dev need it set explicitly. */
+const windowIcon = isDev
+	? path.join(app.getAppPath(), 'build', 'icon.png')
+	: process.platform === 'linux'
+		? path.join(process.resourcesPath, 'icon.png')
+		: undefined
+
 // Per-launch secret so only this window can talk to the local API, not other local programs or web pages.
 const token = crypto.randomBytes(32).toString('hex')
 
@@ -253,6 +260,7 @@ function createWindow(port: number) {
 		minHeight: 600,
 		backgroundColor: '#0d0e10',
 		title: 'Kemix',
+		icon: windowIcon,
 		autoHideMenuBar: true,
 		webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
 	})

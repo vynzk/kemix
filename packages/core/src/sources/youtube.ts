@@ -6,13 +6,14 @@ import type { AudioQuality, SourceTrack, TargetTrack, YouTubePreview } from '../
 import { cleanArtist, searchQueries } from '../match/score'
 import { searchService, YOUTUBE_MIN_SCORE } from '../match/resolve'
 import { errorMessage } from '../util'
+import type { ManagedYtDlp } from './yt-dlp'
 
 /** What YouTube typically serves for audio (AAC ~128 kbps or Opus ~130 kbps): always lossy. */
 export const YOUTUBE_QUALITY: AudioQuality = { codec: 'aac', lossless: false, bitrateKbps: 128 }
 
 const YT_DLP_HINT =
-	'Para bajar desde YouTube instala yt-dlp (en una terminal: winget install yt-dlp) y reinicia Kemix, ' +
-	'o indica la ruta de yt-dlp.exe en Ajustes.'
+	'Kemix baja yt-dlp por su cuenta la primera vez que lo necesita (hace falta conexión a internet). ' +
+	'Si no puede, instálalo aparte (https://github.com/yt-dlp/yt-dlp) e indica su ruta en Ajustes.'
 
 export function youtubeUrl(videoId: string) {
 	return `https://www.youtube.com/watch?v=${videoId}`
@@ -46,15 +47,19 @@ function videoIdFromUrl(url: string): string {
 
 /**
  * Plain YouTube (not YouTube Music): searching and the iframe player need no account.
- * Downloads go through yt-dlp when available, which keeps up with YouTube's anti-download changes;
- * youtubei.js is a best-effort fallback (YouTube blocks it for most licensed music).
+ * Downloads go through yt-dlp, which keeps up with YouTube's anti-download changes: the one set in Settings, else
+ * Kemix's own copy (downloaded on first use), else one on the PATH. youtubei.js is a best-effort fallback (YouTube
+ * blocks it for most licensed music).
  */
 export class YouTube {
 	#yt?: Promise<Innertube>
 	#previews = new Map<string, YouTubePreview | null>()
 	#ytDlp = new Map<string, Promise<boolean>>()
 
-	constructor(private ytDlpPath: () => string) {}
+	constructor(
+		private ytDlpPath: () => string,
+		private managedYtDlp?: ManagedYtDlp
+	) {}
 
 	#client() {
 		this.#yt ??= Innertube.create({ retrieve_player: false, generate_session_locally: true }).catch((err) => {
@@ -134,25 +139,38 @@ export class YouTube {
 
 	async open(videoId: string): Promise<AudioStream> {
 		const configured = this.ytDlpPath()
-		const bin = configured || 'yt-dlp'
-		if (await this.#hasYtDlp(bin)) return this.#openWithYtDlp(bin, videoId)
-		if (configured) throw new Error(`No se pudo ejecutar yt-dlp en "${configured}". ${YT_DLP_HINT}`)
+		if (configured) {
+			if (await this.#hasYtDlp(configured)) return this.#openWithYtDlp(configured, videoId)
+			throw new Error(`No se pudo ejecutar yt-dlp en "${configured}". ${YT_DLP_HINT}`)
+		}
+		let managedError = ''
+		if (this.managedYtDlp) {
+			try {
+				const bin = await this.managedYtDlp.path()
+				if (await this.#hasYtDlp(bin)) return this.#openWithYtDlp(bin, videoId)
+				managedError = `No se pudo ejecutar ${bin}. `
+			} catch (err) {
+				managedError = `${errorMessage(err)}. `
+			}
+		}
+		if (await this.#hasYtDlp('yt-dlp')) return this.#openWithYtDlp('yt-dlp', videoId)
 		try {
 			return await this.#openWithYoutubei(videoId)
 		} catch (err) {
-			throw new Error(`YouTube bloqueó la descarga directa (${errorMessage(err)}). ${YT_DLP_HINT}`)
+			throw new Error(`YouTube bloqueó la descarga directa (${errorMessage(err)}). ${managedError}${YT_DLP_HINT}`)
 		}
 	}
 
 	async #openWithYtDlp(bin: string, videoId: string): Promise<AudioStream> {
 		// Prefer m4a (AAC): plays everywhere and takes tags. No ffmpeg needed since nothing is re-encoded.
-		// YouTube answers 403 unless yt-dlp can solve its JS challenges: it only looks for Deno by default,
-		// so also let it use Node (adds to Deno, doesn't replace it).
+		// YouTube answers 403 unless yt-dlp can solve its JS challenges, which needs a JS runtime the user most likely
+		// doesn't have. Lend it our own executable: Electron behaves as plain Node with ELECTRON_RUN_AS_NODE (and under
+		// the standalone server execPath already is Node). Adds to Deno if installed, doesn't replace it.
 		const child = spawn(
 			bin,
 			[
 				'--js-runtimes',
-				'node',
+				`node:${process.execPath}`,
 				'-f',
 				'bestaudio[ext=m4a]/bestaudio',
 				'--no-playlist',
@@ -162,7 +180,7 @@ export class YouTube {
 				'-',
 				youtubeUrl(videoId)
 			],
-			{ windowsHide: true }
+			{ windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
 		)
 		let stderr = ''
 		child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)))

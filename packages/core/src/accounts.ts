@@ -18,6 +18,7 @@ import { SpotifyWebSource, type SpotifyWebSession } from './sources/spotify-web'
 import { YtMusicSource, type YtMusicAccount } from './sources/ytmusic'
 import { getCookie, normalizeCookieInput } from './sources/cookies'
 import { YouTube } from './sources/youtube'
+import { ManagedYtDlp } from './sources/yt-dlp'
 import { createDeezerDownloader, createQobuzDownloader, type Downloader } from './download/lucida-adapter'
 import { errorMessage, now } from './util'
 
@@ -89,9 +90,11 @@ export class Accounts {
 		private db: Db,
 		private secrets: SecretStore,
 		private settings: SettingsStore,
-		private events: EventBus
+		private events: EventBus,
+		/** Where Kemix keeps the tools it downloads for itself (its own yt-dlp). */
+		binDir: string
 	) {
-		this.youtube = new YouTube(() => this.settings.get().ytDlpPath)
+		this.youtube = new YouTube(() => this.settings.get().ytDlpPath, new ManagedYtDlp(binDir))
 	}
 
 	list(): AccountInfo[] {

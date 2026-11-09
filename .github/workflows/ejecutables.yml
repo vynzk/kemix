@@ -1,0 +1,64 @@
+# Compila el instalador de Windows y el AppImage/.deb de Linux.
+# - Manual: pestaña Actions → "Ejecutables" → Run workflow. Los archivos quedan como artefactos del run.
+# - Con un tag v* (git tag v0.1.0 && git push origin v0.1.0): además crea un Release con los archivos.
+name: Ejecutables
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win
+            os: windows-latest
+            files: apps/desktop/release/*.exe
+          # 22.04 (glibc 2.35, GCC 11): el módulo nativo compilado aquí funciona también en distros más viejas que 24.04.
+          - target: linux
+            os: ubuntu-22.04
+            files: |
+              apps/desktop/release/*.AppImage
+              apps/desktop/release/*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+
+      - run: npm ci
+
+      # blowfish-cbc (descifrado de Deezer) es nativo: si npm no lo compiló, fallar aquí y no con la app ya empaquetada.
+      - name: Comprobar módulo nativo
+        run: node -e "require('blowfish-cbc')"
+
+      - run: npm run dist:${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: kemix-${{ matrix.target }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Crear release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --title "Kemix ${{ github.ref_name }}" --generate-notes

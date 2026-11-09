@@ -12,6 +12,8 @@
     "dev:web": "concurrently -k -n server,ui -c yellow,cyan \"npm run dev -w @kemix/server\" \"npm run dev -w @kemix/ui\"",
     "build": "npm run build -w @kemix/ui && npm run build -w @kemix/desktop",
     "dist": "npm run build && npm run dist -w @kemix/desktop",
+    "dist:win": "npm run build && npm run dist:win -w @kemix/desktop",
+    "dist:linux": "npm run build && npm run dist:linux -w @kemix/desktop",
     "test": "vitest run",
     "typecheck": "tsc -p packages/core && tsc -p packages/server && tsc -p packages/ui && tsc -p apps/desktop"
   },

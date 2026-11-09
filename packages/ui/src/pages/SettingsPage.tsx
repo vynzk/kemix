@@ -50,7 +50,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas; necesita yt-dlp."
+					hint="En modo automático se busca primero en el de arriba. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
@@ -133,7 +133,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Ruta de yt-dlp (opcional)"
-					hint="Solo para bajar desde YouTube los temas que no están en Qobuz/Deezer. Vacío: se busca yt-dlp en el PATH (instálalo con: winget install yt-dlp)."
+					hint="Solo para bajar desde YouTube los temas que no están en Qobuz/Deezer. Vacío: Kemix baja y mantiene al día su propia copia de yt-dlp la primera vez que la necesita."
 				>
 					<Input
 						placeholder="C:\ruta\a\yt-dlp.exe"
