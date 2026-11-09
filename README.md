@@ -56,6 +56,12 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   por defecto está en Ajustes y cada playlist puede elegir otro al descargar; si un tema no existe en esa calidad se baja
   en la mejor que tenga por debajo. Qobuz no baja de MP3 320 y el único FLAC de Deezer es 16-bit/44.1 kHz. Los temas
   ya descargados no cambian; un archivo solo se reutiliza para otra playlist si se bajó en la misma calidad.
+- **Escanear calidad**: en cada playlist, "Escanear calidad" busca los temas (todos o los marcados) en el proveedor
+  elegido sin descargar nada, y muestra en qué calidad saldría cada uno con la calidad elegida y tu cuenta (y la
+  máxima del tema si es mayor), más un resumen: Hi-Res, CD, con pérdida, dudosos y no encontrados. Cada grupo del
+  resumen se puede seleccionar para descargar solo esos. Al descargar después se usan esos resultados sin buscar de
+  nuevo. Volver a escanear solo busca lo que quedó sin resolver; si un tema que esperaba en Revisión aparece, su
+  descarga sigue sola.
 - **Buscar y crear playlists**: en "Buscar" eliges un servicio conectado, buscas temas, los agregas a una playlist nueva
   (con orden) y se crea como privada en tu cuenta de ese servicio; luego aparece en la Biblioteca. Spotify pide permiso
   de escritura: las conexiones hechas antes de esta función deben desconectarse y volver a conectarse.
@@ -67,6 +73,22 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   hay versión nueva); si eso falla, el del PATH. Como runtime de JavaScript para los desafíos de YouTube se le pasa el
   propio ejecutable de Kemix (Electron como Node), así que no hace falta instalar nada. Sin yt-dlp se intenta con
   youtubei.js, pero YouTube bloquea así la mayoría de la música con licencia.
+- **SoundCloud como respaldo**: igual que YouTube (sin cuenta, solo si lo activas en Ajustes o lo eliges a mano), con
+  el mismo yt-dlp. Baja la mejor calidad que tenga cada tema, tal cual llega, sin recodificar: el archivo original
+  que subió el artista si permite descargarlo (puede ser WAV o FLAC), si no AAC 160 kbps, y en temas viejos MP3 128
+  (nunca el Opus de 64 kbps, aunque yt-dlp lo prefiera por defecto). Sirve para remixes, sets y artistas
+  independientes que no están en Qobuz ni Deezer. Sin cuenta, los temas de SoundCloud Go+ solo ofrecen 30 s y se
+  descartan en la búsqueda. En Revisión, el ▶ de una opción de SoundCloud la reproduce con el reproductor de
+  SoundCloud integrado.
+- **Cuenta de SoundCloud (opcional)**: se conecta iniciando sesión en una ventana (app de escritorio) o con las
+  cookies de soundcloud.com; Kemix guarda solo la cookie `oauth_token`, cifrada. Con ella importa tus playlists, las
+  que te gustaron y tus Me gusta (vía `api-v2.soundcloud.com`, con el client id público del reproductor web, igual
+  que yt-dlp), busca en SoundCloud, y yt-dlp descarga con tu sesión: originales reservados a usuarios
+  registrados y, con Go+, AAC 256 y los temas Go+ completos. Los temas importados de SoundCloud se buscan primero en
+  Qobuz y Deezer; si no están, su propia subida aparece como primera opción (en Revisión, o directo si SoundCloud
+  está en la prioridad de servicios). SoundCloud no deja que otras apps creen playlists: en Buscar, los temas elegidos
+  en SoundCloud se guardan en una playlist nueva de otro servicio conectado (Spotify, YouTube Music, Qobuz o Deezer).
+  Kemix busca cada tema ahí y avisa cuáles no encontró.
 - **Versión web**: `packages/server/src/standalone.ts` corre todo sin Electron. Variables: `KEMIX_DATA_DIR`,
   `KEMIX_SECRET` (clave de cifrado de credenciales), `KEMIX_TOKEN`, `KEMIX_UI_DIR`, `KEMIX_HOST`, `KEMIX_PORT`.
   Para hacerla multiusuario falta añadir login de usuarios y separar los datos por usuario.

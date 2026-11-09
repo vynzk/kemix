@@ -24,7 +24,8 @@ interface PlayerApi {
 	playVideo(video: { videoId: string; title: string; artists: string[] }): void
 	/**
 	 * A review candidate, to check it's the right version: that very recording (its service's audio, even a short
-	 * clip), falling back to YouTube only when the service has none. YouTube candidates are videos already.
+	 * clip), falling back to YouTube only when the service has none. YouTube candidates are videos already, and
+	 * SoundCloud ones play in SoundCloud's own embedded player.
 	 */
 	playCandidate(candidate: MatchCandidate): void
 	stop(): void
@@ -77,7 +78,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 						state: 'ready',
 						media: { kind: 'youtube', videoId: t.sourceId, title: t.title }
 					})
-				: lookUp(`${service}:${t.sourceId}`, { title: t.title, artists: t.artists }, () => api.previewTrack(service, t)),
+				: service === 'soundcloud' && t.url
+					? setPlaying({
+							key: `${service}:${t.sourceId}`,
+							title: t.title,
+							artists: t.artists,
+							state: 'ready',
+							media: { kind: 'soundcloud', url: t.url, title: t.title }
+						})
+					: lookUp(`${service}:${t.sourceId}`, { title: t.title, artists: t.artists }, () => api.previewTrack(service, t)),
 		[lookUp]
 	)
 
@@ -94,6 +103,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 	const playCandidate = useCallback(
 		(c: MatchCandidate) => {
 			if (c.service === 'youtube') return playVideo({ videoId: c.id, title: c.title, artists: c.artists })
+			if (c.service === 'soundcloud') {
+				return setPlaying({
+					key: candidateKey(c),
+					title: c.title,
+					artists: c.artists,
+					state: 'ready',
+					media: { kind: 'soundcloud', url: c.url, title: c.title }
+				})
+			}
 			const service = c.service
 			const track: SourceTrack = { sourceId: c.id, title: c.title, artists: c.artists, durationMs: c.durationMs }
 			lookUp(candidateKey(c), { title: c.title, artists: c.artists }, () => api.previewTrack(service, track, true))
@@ -126,7 +144,10 @@ interface Transport {
 	seek(seconds: number): void
 }
 
-/** Bottom bar: the service's own audio, or YouTube's embedded player. Shown only while something is playing. */
+/**
+ * Bottom bar: the service's own audio, or YouTube's or SoundCloud's embedded player. Shown only while something is
+ * playing. SoundCloud's widget brings its own controls.
+ */
 export function PlayerBar() {
 	const { playing, stop } = usePlayer()
 	const frame = useRef<HTMLIFrameElement>(null)
@@ -141,6 +162,7 @@ export function PlayerBar() {
 	const media = playing?.state === 'ready' ? playing.media : undefined
 	const videoId = media?.kind === 'youtube' ? media.videoId : undefined
 	const streamUrl = media?.kind === 'stream' ? media.url : undefined
+	const soundcloudUrl = media?.kind === 'soundcloud' ? media.url : undefined
 	const effectiveVolume = muted ? 0 : volume
 	const volumeRef = useRef(effectiveVolume)
 	volumeRef.current = effectiveVolume
@@ -216,7 +238,7 @@ export function PlayerBar() {
 	if (!playing) return null
 	return (
 		<div className="flex items-start gap-3 border-t border-line bg-panel px-4 py-2">
-			{media?.kind !== 'stream' && (
+			{media?.kind !== 'stream' && media?.kind !== 'soundcloud' && (
 				<div className="h-20 w-36 shrink-0 overflow-hidden rounded bg-ink">
 					{videoId && (
 						<iframe
@@ -256,10 +278,20 @@ export function PlayerBar() {
 					{playing.state === 'notfound' && 'No encontré audio para este tema (ni en su servicio ni en YouTube).'}
 					{playing.state === 'error' && <span className="text-red-300">{playing.error}</span>}
 					{media?.kind === 'youtube' && `YouTube: ${media.title}`}
+					{media?.kind === 'soundcloud' && `SoundCloud: ${media.title}`}
 					{media?.kind === 'stream' &&
 						`${SERVICE_LABEL[media.service]}${media.full ? '' : ` · vista previa de 30 s${playing.key.startsWith('candidate:') ? '' : ' (no está en YouTube)'}`}`}
 				</p>
-				{media && (
+				{soundcloudUrl && (
+					<iframe
+						key={soundcloudUrl}
+						title="Reproductor de SoundCloud"
+						className="mt-1 h-5 w-full"
+						src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(soundcloudUrl)}&auto_play=true&color=%23ff5500&show_user=true&show_comments=false&show_reposts=false&show_teaser=false&hide_related=true&visual=false`}
+						allow="autoplay"
+					/>
+				)}
+				{media && media.kind !== 'soundcloud' && (
 					<div className="mt-1 flex items-center gap-2 text-[11px] text-muted tabular-nums">
 						<button
 							type="button"
@@ -311,6 +343,11 @@ export function PlayerBar() {
 			<div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
 				{videoId && (
 					<a className="text-xs text-muted hover:text-zinc-100" href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noreferrer">
+						Abrir ↗
+					</a>
+				)}
+				{soundcloudUrl && (
+					<a className="text-xs text-muted hover:text-zinc-100" href={soundcloudUrl} target="_blank" rel="noreferrer">
 						Abrir ↗
 					</a>
 				)}

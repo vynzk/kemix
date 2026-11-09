@@ -105,13 +105,24 @@ class FakeSource implements SourceConnector {
 	}
 }
 
+/** Stands in for ffmpeg: writes a marker plus the input, and records each conversion. */
+class FakeMp3 {
+	calls: { input: string; lossless: boolean }[] = []
+	async toMp3(input: string, output: string, opts: { lossless: boolean }) {
+		this.calls.push({ input: path.basename(input), lossless: opts.lossless })
+		fs.writeFileSync(output, Buffer.concat([Buffer.from('mp3:'), fs.readFileSync(input)]))
+	}
+}
+
 let dir: string
 let kemix: Kemix
 let downloader: FakeDownloader
+let mp3: FakeMp3
 
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kemix-test-'))
-	kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test') })
+	mp3 = new FakeMp3()
+	kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test'), mp3 })
 	kemix.settings.update({ downloadDir: path.join(dir, 'music') })
 	downloader = new FakeDownloader()
 	const source = new FakeSource()
@@ -291,6 +302,55 @@ describe('library + download queue', () => {
 		expect(three.candidates.some((c) => c.service === 'youtube')).toBe(false)
 	})
 
+	it('scans quality before downloading, without downloading, and the download reuses the scan', async () => {
+		const hires = { codec: 'flac' as const, lossless: true, bitDepth: 24, sampleRateHz: 96000 }
+		// Search results without quality (like a match straight from the playlist's service): the scan asks for it.
+		let searches = 0
+		const search = downloader.search.bind(downloader)
+		downloader.search = async (q: string) => {
+			searches++
+			return search(q)
+		}
+		const getTrack = downloader.getTrack.bind(downloader)
+		downloader.getTrack = async (url: string) => {
+			const t = await getTrack(url)
+			return { ...t, meta: { ...t.meta, maxQuality: hires } }
+		}
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+
+		const started = await kemix.queue.scanPlaylist(playlist!.id)
+		expect(started).toMatchObject({ running: true, total: 4, done: 0 })
+		const scan = await waitFor(() => {
+			const s = kemix.queue.scanState(playlist!.id)
+			return s && !s.running && s
+		})
+		expect(scan).toMatchObject({ done: 4, total: 4, failed: 0 })
+		expect(downloader.downloads).toBe(0)
+		expect(kemix.db.prepare('SELECT COUNT(*) AS n FROM downloads').get()).toEqual({ n: 0 })
+
+		const detail = await kemix.library.getPlaylist(playlist!.id)
+		expect(detail.tracks.map((t) => t.match?.status)).toEqual(['auto', 'auto', 'notfound', 'notfound'])
+		expect(detail.tracks[0]!.match?.maxQuality).toEqual(hires)
+		expect(detail.tracks[1]!.match?.maxQuality).toEqual(hires)
+		expect(detail.tracks.every((t) => !t.download)).toBe(true)
+
+		// Downloading afterwards uses the matches found: no new searches for the tracks already matched.
+		const before = searches
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0, 1])
+		await settle(kemix)
+		expect(searches).toBe(before)
+		expect(downloader.downloads).toBe(2)
+
+		// A second scan only looks up what's still unresolved (and not what was downloaded).
+		await kemix.queue.scanPlaylist(playlist!.id)
+		const again = await waitFor(() => {
+			const s = kemix.queue.scanState(playlist!.id)
+			return s && !s.running && s
+		})
+		expect(again.total).toBe(2)
+	})
+
 	it('reuses already-downloaded files instead of downloading again', async () => {
 		await kemix.library.syncAll()
 		const [playlist] = kemix.library.listPlaylists()
@@ -350,6 +410,45 @@ describe('library + download queue', () => {
 		expect(downloader.downloads).toBe(2)
 		const tracks = (await kemix.library.getPlaylist(mp3Low.playlistId!)).tracks
 		expect(tracks[0]!.download?.status).toBe('done')
+	})
+
+	it('converts to MP3 only what does not arrive as MP3 when "MP3 compatible" is picked', async () => {
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		// Qobuz's own MP3 is already compatible: asked as MP3 320, kept as it came.
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0], null, 'mp3_compat')
+		await settle(kemix)
+		expect(downloader.levels).toEqual(['mp3_compat'])
+		expect(mp3.calls).toEqual([])
+
+		// A FLAC (or YouTube's AAC) is converted: an .mp3 is left, and nothing of the original.
+		Object.assign(downloader, {
+			getTrack: async (url: string) => ({
+				meta: catalog.find((t) => t.url === url)!,
+				open: async () => ({ stream: Readable.from([Buffer.from('flac-audio')]), mimeType: 'audio/flac' })
+			})
+		})
+		await kemix.queue.enqueuePlaylist(playlist!.id, [1], null, 'mp3_compat')
+		await settle(kemix)
+		expect(mp3.calls).toEqual([{ input: '02 - Beta - Two.mp3.download', lossless: true }])
+		const folder = path.join(dir, 'music', 'Mi Playlist_ Favoritas_')
+		const files = fs.readdirSync(folder).filter((f) => !f.endsWith('.m3u8')).sort()
+		expect(files).toEqual(['01 - Alpha - One.mp3', '02 - Beta - Two.mp3'])
+		expect(fs.readFileSync(path.join(folder, '02 - Beta - Two.mp3'), 'utf8')).toBe('mp3:flac-audio')
+
+		// Other qualities are left as they come.
+		const flac = await kemix.library.createPlaylist('spotify', 'En FLAC', ['s1'])
+		await kemix.queue.enqueuePlaylist(flac.playlistId!, undefined, null, 'max')
+		await settle(kemix)
+		expect((await kemix.library.getPlaylist(flac.playlistId!)).tracks[0]!.download?.path).toMatch(/\.flac$/)
+		expect(mp3.calls).toHaveLength(1)
+
+		// The MP3 already there is reused for "MP3 compatible", not the FLAC.
+		const again = await kemix.library.createPlaylist('spotify', 'Compatible', ['s1'])
+		await kemix.queue.enqueuePlaylist(again.playlistId!, undefined, null, 'mp3_compat')
+		await settle(kemix)
+		expect((await kemix.library.getPlaylist(again.playlistId!)).tracks[0]!.download?.path).toMatch(/\.mp3$/)
+		expect(mp3.calls).toHaveLength(1)
 	})
 
 	it('marks tracks as not downloaded when their file was deleted from disk', async () => {
@@ -424,6 +523,26 @@ describe('library + download queue', () => {
 		const detail = await kemix.library.getPlaylist(playlistId!)
 		expect(detail.name).toBe('Nueva')
 		expect(detail.tracks.map((t) => t.title).sort()).toEqual(['One', 'Two'])
+	})
+
+	it('creates a playlist on another service with tracks found there, leaving out the ones it lacks', async () => {
+		const source = kemix.accounts.source('spotify') as unknown as FakeSource
+		// What the other service (SoundCloud) gave: noisy titles; "Nada" isn't on Spotify.
+		const fromSoundCloud: SourceTrack[] = [
+			{ sourceId: 'sc2', title: 'Beta - Two (Original Mix)', artists: ['Beta Official'], durationMs: 181_000 },
+			{ sourceId: 'sc1', title: 'One', artists: ['Alpha'], durationMs: 200_000 },
+			{ sourceId: 'sc9', title: 'Nada', artists: ['Nadie'], durationMs: 100_000 }
+		]
+		Object.assign(source, {
+			search: async (q: string) => sourceTracks.filter((t) => q.toLowerCase().includes(t.artists[0]!.toLowerCase()))
+		})
+		const res = await kemix.library.copyPlaylist('spotify', 'Desde SoundCloud', fromSoundCloud)
+		expect(source.created.at(-1)).toMatchObject({ name: 'Desde SoundCloud', trackIds: ['s2', 's1'] })
+		expect(res.added).toBe(2)
+		expect(res.missing.map((t) => t.sourceId)).toEqual(['sc9'])
+		expect(res.playlistId).not.toBeNull()
+
+		await expect(kemix.library.copyPlaylist('spotify', 'Vacía', [fromSoundCloud[2]!])).rejects.toThrow(/Ninguno/)
 	})
 
 	it('organizes playlists into folders and keeps them when a folder is deleted', async () => {

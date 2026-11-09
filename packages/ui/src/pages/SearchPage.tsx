@@ -22,6 +22,12 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 	const [drafts, setDrafts] = useState<Drafts>({})
 	const [name, setName] = useState('')
 	const draft = (service && drafts[service]) || []
+	// SoundCloud doesn't let other apps create playlists: its tracks go into a playlist on another connected service,
+	// looked up there one by one.
+	const copying = service === 'soundcloud'
+	const targets: SourceService[] = services.filter((s) => s !== 'soundcloud')
+	const [copyTo, setCopyTo] = useState<SourceService | null>(null)
+	const createIn = copying ? (copyTo && targets.includes(copyTo) ? copyTo : (targets[0] ?? null)) : service
 
 	const results = useQuery({
 		queryKey: ['search', service, query],
@@ -31,7 +37,12 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 	})
 
 	const create = useMutation({
-		mutationFn: () => api.createPlaylist(service!, name, draft.map((t) => t.sourceId)),
+		mutationFn: async () => {
+			if (!createIn) throw new Error('Conecta Spotify, YouTube Music, Qobuz o Deezer para guardar ahí estos temas')
+			if (copying) return { to: createIn, ...(await api.copyPlaylist(createIn, name, draft)) }
+			const res = await api.createPlaylist(createIn, name, draft.map((t) => t.sourceId))
+			return { to: createIn, ...res, added: draft.length, missing: [] as SourceTrack[] }
+		},
 		onSuccess: () => {
 			setDrafts((d) => ({ ...d, [service!]: [] }))
 			setName('')
@@ -44,7 +55,7 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 			<div>
 				<PageHeader title="Buscar" />
 				<Empty title="No hay cuentas conectadas">
-					Conecta Spotify, YouTube Music, Qobuz o Deezer para buscar temas y crear playlists ahí.
+					Conecta Spotify, YouTube Music, Qobuz, Deezer o SoundCloud para buscar temas y crear playlists.
 					<div className="mt-4">
 						<Button onClick={onGoToAccounts}>Ir a Cuentas</Button>
 					</div>
@@ -147,9 +158,41 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 
 				<aside className="w-full shrink-0 space-y-3 rounded-lg border border-line bg-panel p-4 lg:sticky lg:top-4 lg:w-80">
 					<h2 className="flex items-center gap-2 font-semibold">
-						<span className="h-2 w-2 rounded-full" style={{ background: SERVICE_COLOR[service] }} />
-						Nueva playlist en {SERVICE_LABEL[service]}
+						<span className="h-2 w-2 rounded-full" style={{ background: SERVICE_COLOR[createIn ?? service] }} />
+						{copying ? 'Nueva playlist con estos temas' : `Nueva playlist en ${SERVICE_LABEL[service]}`}
 					</h2>
+					{copying &&
+						(targets.length ? (
+							<div className="space-y-1.5">
+								<label className="flex items-center gap-2 text-sm">
+									<span className="shrink-0 text-muted">Crear en</span>
+									<select
+										value={createIn ?? ''}
+										onChange={(e) => {
+											setCopyTo(e.target.value as SourceService)
+											create.reset()
+										}}
+										className="w-full rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
+									>
+										{targets.map((s) => (
+											<option key={s} value={s}>
+												{SERVICE_LABEL[s]}
+											</option>
+										))}
+									</select>
+								</label>
+								<p className="text-[11px] text-muted">
+									SoundCloud no permite crear playlists desde otras apps. Kemix busca cada tema en{' '}
+									{createIn && SERVICE_LABEL[createIn]} y crea la playlist ahí; los que no encuentre se omiten y te los
+									muestra.
+								</p>
+							</div>
+						) : (
+							<p className="text-xs text-amber-300/90">
+								SoundCloud no permite crear playlists desde otras apps. Conecta Spotify, YouTube Music, Qobuz o Deezer y
+								Kemix guarda ahí estos temas.
+							</p>
+						))}
 					<Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la playlist" />
 					{draft.length === 0 ? (
 						<p className="text-xs text-muted">Agrega temas desde los resultados con “+ Agregar”.</p>
@@ -187,14 +230,38 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 					<Button
 						variant="primary"
 						className="w-full"
-						disabled={!name.trim() || !draft.length || create.isPending}
+						disabled={!name.trim() || !draft.length || !createIn || create.isPending}
 						onClick={() => create.mutate()}
 					>
-						{create.isPending ? 'Creando…' : `Crear en ${SERVICE_LABEL[service]}${draft.length ? ` (${draft.length})` : ''}`}
+						{create.isPending
+							? copying && createIn
+								? `Buscando los temas en ${SERVICE_LABEL[createIn]}…`
+								: 'Creando…'
+							: `Crear en ${SERVICE_LABEL[createIn ?? service]}${draft.length ? ` (${draft.length})` : ''}`}
 					</Button>
 					{create.isSuccess && (
 						<div className="space-y-2 text-xs text-emerald-300">
-							<p>Playlist creada en tu cuenta de {SERVICE_LABEL[service]}.</p>
+							<p>
+								Playlist creada en tu cuenta de {SERVICE_LABEL[create.data.to]}
+								{create.data.missing.length ? ` con ${create.data.added} temas` : ''}.
+							</p>
+							{!!create.data.missing.length && (
+								<div className="rounded-md bg-amber-950/30 px-2 py-1.5 text-amber-200">
+									<p>
+										{create.data.missing.length === 1
+											? `1 tema no está en ${SERVICE_LABEL[create.data.to]} y se omitió:`
+											: `${create.data.missing.length} temas no están en ${SERVICE_LABEL[create.data.to]} y se omitieron:`}
+									</p>
+									<ul className="mt-1 list-disc space-y-0.5 pl-4">
+										{create.data.missing.map((t) => (
+											<li key={t.sourceId}>
+												{t.title}
+												{t.artists.length ? ` · ${t.artists.join(', ')}` : ''}
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
 							{create.data.playlistId !== null ? (
 								<Button onClick={() => onOpenPlaylist(create.data.playlistId!)}>Abrir en la Biblioteca</Button>
 							) : (

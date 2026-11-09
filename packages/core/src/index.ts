@@ -7,6 +7,7 @@ import { SettingsStore } from './settings'
 import { Accounts } from './accounts'
 import { Library } from './library'
 import { DownloadQueue } from './download/queue'
+import { Ffmpeg, ManagedFfmpeg, type Mp3Converter } from './download/ffmpeg'
 
 export * from './types'
 export { passphraseCipher, type Cipher } from './secrets'
@@ -15,12 +16,15 @@ export type { Accounts, SpotifyWebLogin } from './accounts'
 export type { SpotifyWebOp, SpotifyWebSession } from './sources/spotify-web'
 export type { Library } from './library'
 export type { DownloadQueue } from './download/queue'
+export type { Mp3Converter } from './download/ffmpeg'
 export type { YtMusicAccount } from './sources/ytmusic'
 
 export interface KemixOptions {
-	/** Directory for the database and the tools Kemix downloads for itself (yt-dlp). */
+	/** Directory for the database and the tools Kemix downloads for itself (yt-dlp, ffmpeg). */
 	dataDir: string
 	cipher: Cipher
+	/** MP3 conversion; by default ffmpeg (Kemix's own copy, downloaded on first use). Tests pass a fake one. */
+	mp3?: Mp3Converter
 }
 
 /** The whole backend, independent of how it is exposed (Electron, HTTP server…). */
@@ -38,9 +42,11 @@ export class Kemix {
 		this.db = openDb(path.join(opts.dataDir, 'kemix.db'))
 		this.settings = new SettingsStore(this.db)
 		this.secrets = new SecretStore(this.db, opts.cipher)
-		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, path.join(opts.dataDir, 'bin'))
+		const binDir = path.join(opts.dataDir, 'bin')
+		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, binDir)
 		this.library = new Library(this.db, this.accounts, this.events)
-		this.queue = new DownloadQueue(this.db, this.accounts, this.library, this.settings, this.events)
+		const mp3 = opts.mp3 ?? new Ffmpeg(new ManagedFfmpeg(binDir))
+		this.queue = new DownloadQueue(this.db, this.accounts, this.library, this.settings, this.events, mp3)
 	}
 
 	start() {
@@ -50,6 +56,7 @@ export class Kemix {
 	}
 
 	close() {
+		this.queue.stopScans()
 		this.db.close()
 	}
 }

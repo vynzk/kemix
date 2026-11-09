@@ -111,7 +111,7 @@ function qobuzQuality(raw: RawQobuzTrack): AudioQuality {
  * Qobuz format ids: 27 = FLAC up to 24-bit/192 kHz, 7 = FLAC up to 24-bit/96 kHz, 6 = FLAC 16-bit/44.1 kHz,
  * 5 = MP3 320 (the lowest it has). Qobuz sends the best format the track has up to the one asked for.
  */
-const QOBUZ_FORMAT: Record<QualityLevel, number> = { max: 27, hires96: 7, cd: 6, mp3_320: 5, mp3_128: 5 }
+const QOBUZ_FORMAT: Record<QualityLevel, number> = { max: 27, hires96: 7, cd: 6, mp3_320: 5, mp3_128: 5, mp3_compat: 5 }
 
 /**
  * Qobuz: searches, metadata and audio go straight to the API, so we keep each track's maximum bit depth / sample
@@ -203,7 +203,8 @@ const DEEZER_FORMATS: Record<QualityLevel, number[]> = {
 	hires96: [DEEZER_FLAC, DEEZER_MP3_320, DEEZER_MP3_128],
 	cd: [DEEZER_FLAC, DEEZER_MP3_320, DEEZER_MP3_128],
 	mp3_320: [DEEZER_MP3_320, DEEZER_MP3_128],
-	mp3_128: [DEEZER_MP3_128]
+	mp3_128: [DEEZER_MP3_128],
+	mp3_compat: [DEEZER_MP3_320, DEEZER_MP3_128]
 }
 
 /** Deezer: the quality depends on the account (HiFi → FLAC 16/44.1, Premium → MP3 320, free → MP3 128). */

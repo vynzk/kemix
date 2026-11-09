@@ -48,6 +48,22 @@ const onQobuz: TargetTrack = {
 }
 
 describe('resolveTrack', () => {
+	it('falls back to a convincing SoundCloud upload when no lossless service has the song', async () => {
+		const qobuz = fake('qobuz', {})
+		const upload: TargetTrack = {
+			service: 'soundcloud',
+			id: '99',
+			url: 'https://soundcloud.com/kevinkaarl/que-hay-de-malo',
+			title: 'Kevin Kaarl - Qué Hay De Malo',
+			artists: ['kevinkaarl'],
+			durationMs: 201_000
+		}
+		const soundcloud = fake('soundcloud', { 'Kevin Kaarl ¿Qué Hay De Malo?': [upload] })
+		const res = await resolveTrack(track(), [qobuz.d, soundcloud.d], 0.9)
+		expect(res.status).toBe('auto')
+		expect(res.target).toMatchObject({ service: 'soundcloud', id: '99' })
+	})
+
 	it('tries broader searches when the first one finds nothing', async () => {
 		const qobuz = fake('qobuz', { 'kevin kaarl que hay de malo': [onQobuz] })
 		const res = await resolveTrack(track(), [qobuz.d], 0.9)

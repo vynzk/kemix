@@ -15,6 +15,7 @@ import type {
 	DownloadStatus,
 	MatchCandidate,
 	QualityLevel,
+	ScanState,
 	SourceService,
 	SourceTrack,
 	StreamPreview,
@@ -22,16 +23,23 @@ import type {
 	TrackPreview,
 	YouTubePreview
 } from '../types'
-import { DOWNLOAD_SERVICE_LABEL, serviceQualityLevel } from '../types'
-import { isrcMatch, resolveTrack, searchService, YOUTUBE_MIN_SCORE } from '../match/resolve'
+import { DOWNLOAD_SERVICE_LABEL, isLossyService, serviceQualityLevel } from '../types'
+import { isrcMatch, LOSSY_MIN_SCORE, resolveTrack, searchService } from '../match/resolve'
 import { searchQueries } from '../match/score'
 import { extensionFor, playlistDir, trackFileName } from './paths'
 import { fetchCover, writeM3u, writeTags } from './tagger'
 import { readFileQuality } from './quality'
+import { sourceUpload } from '../sources/soundcloud'
+import type { Mp3Converter } from './ffmpeg'
 import { errorMessage, now } from '../util'
 
 const MAX_ATTEMPTS = 3
 const ACTIVE: DownloadStatus[] = ['queued', 'matching', 'downloading']
+
+interface StoredMatch {
+	status: string
+	target: MatchCandidate | null
+}
 
 interface Row {
 	id: number
@@ -53,13 +61,17 @@ export class DownloadQueue {
 	#lastProgress = new Map<number, number>()
 	/** Per-playlist chain of .m3u8 writes, so concurrent finishing downloads never write the file at the same time. */
 	#m3uWrites = new Map<number, Promise<void>>()
+	/** Quality scans by playlist: the running one, or the last one's result. */
+	#scans = new Map<number, { state: ScanState; abort: AbortController }>()
 
 	constructor(
 		private db: Db,
 		private accounts: Accounts,
 		private library: Library,
 		private settings: SettingsStore,
-		private events: EventBus
+		private events: EventBus,
+		/** Converts downloads to MP3 when the 'mp3_compat' quality is picked. */
+		private mp3: Mp3Converter
 	) {}
 
 	/** Resume work left over from a previous run (e.g. the app was closed mid-download). */
@@ -82,7 +94,7 @@ export class DownloadQueue {
 		provider?: DownloadService | null,
 		level?: QualityLevel | null
 	) {
-		if (provider && provider !== 'youtube' && !this.accounts.isConnected(provider)) {
+		if (provider && !isLossyService(provider) && !this.accounts.isConnected(provider)) {
 			throw new Error(`${DOWNLOAD_SERVICE_LABEL[provider]} no está conectado`)
 		}
 		await this.library.syncPlaylistTracks(playlistId)
@@ -195,6 +207,124 @@ export class DownloadQueue {
 		return rows.map(toDownloadRow)
 	}
 
+	// ---------- quality scan ----------
+
+	/** The playlist's running scan, or the last one's result; null if it was never scanned in this run. */
+	scanState(playlistId: number): ScanState | null {
+		return this.#scans.get(playlistId)?.state ?? null
+	}
+
+	/**
+	 * Look a playlist's tracks up (all of them, or only the given positions) the way a download would, to learn the
+	 * best quality each one has before downloading. Nothing is downloaded and nothing is queued: the matches are
+	 * stored, so a later download uses them without searching again.
+	 * With a `provider`, the tracks are looked up only there; without one, in priority order. Tracks already
+	 * downloaded keep their file's quality and aren't looked up. Runs in the background; progress comes as `scan` events.
+	 */
+	async scanPlaylist(playlistId: number, positions?: number[], provider?: DownloadService | null): Promise<ScanState> {
+		if (provider) await this.#downloaderFor(provider)
+		const running = this.#scans.get(playlistId)
+		if (running?.state.running) return running.state
+		await this.library.syncPlaylistTracks(playlistId)
+		const only = positions?.filter((p) => Number.isInteger(p))
+		const filter = only ? ` AND pt.position IN (${only.join(',') || '-1'})` : ''
+		const rows = this.db
+			.prepare(
+				`SELECT DISTINCT pt.track_id FROM playlist_tracks pt
+				 LEFT JOIN downloads d ON d.playlist_id = pt.playlist_id AND d.position = pt.position
+				 WHERE pt.playlist_id = ? AND (d.status IS NULL OR d.status != 'done')${filter}
+				 ORDER BY pt.position`
+			)
+			.all(playlistId) as { track_id: number }[]
+		const pick = provider ?? null
+		const todo = rows
+			.map((r) => r.track_id)
+			.filter((id) => {
+				const match = this.#match(id)
+				return this.#needsLookup(match, pick) || !!(match?.target && !match.target.maxQuality)
+			})
+
+		const scan = {
+			state: { playlistId, running: true, done: 0, total: todo.length, failed: 0, error: null } as ScanState,
+			abort: new AbortController()
+		}
+		this.#scans.set(playlistId, scan)
+		this.events.emit({ type: 'scan', scan: { ...scan.state } })
+		void this.#runScan(scan, todo, pick)
+		return { ...scan.state }
+	}
+
+	/** Stop every running scan (on shutdown). */
+	stopScans() {
+		for (const s of this.#scans.values()) s.abort.abort()
+	}
+
+	/**
+	 * Whether a scan has to look the track up: never looked up, matched elsewhere than the provider picked, or left
+	 * unresolved last time (it may be found now). A track the user skipped stays skipped unless a provider is picked.
+	 */
+	#needsLookup(match: StoredMatch | null, provider: DownloadService | null) {
+		if (!match || this.#isOtherProvider(match, provider)) return true
+		return !provider && (match.status === 'pending' || match.status === 'notfound')
+	}
+
+	async #runScan(scan: { state: ScanState; abort: AbortController }, trackIds: number[], provider: DownloadService | null) {
+		const { state, abort } = scan
+		const emit = () => this.events.emit({ type: 'scan', scan: { ...state } })
+		let next = 0
+		const worker = async () => {
+			while (next < trackIds.length && !abort.signal.aborted) {
+				const trackId = trackIds[next++]!
+				try {
+					await this.#scanTrack(trackId, provider)
+				} catch (err) {
+					if (abort.signal.aborted) return
+					state.failed++
+					state.error ??= errorMessage(err)
+				}
+				if (abort.signal.aborted) return
+				state.done++
+				emit()
+				this.events.emit({ type: 'playlist', playlistId: state.playlistId })
+			}
+		}
+		const workers = Math.max(1, Math.min(this.settings.get().concurrency, trackIds.length))
+		await Promise.all(Array.from({ length: workers }, worker))
+		if (abort.signal.aborted) return
+		state.running = false
+		emit()
+		this.events.emit({ type: 'playlist', playlistId: state.playlistId })
+		this.events.emit({ type: 'library' })
+	}
+
+	async #scanTrack(trackId: number, provider: DownloadService | null) {
+		let match = this.#match(trackId)
+		if (this.#needsLookup(match, provider)) {
+			match = await this.#resolveAndStore(trackId, provider)
+			// Downloads already asked for and waiting in review for this track can go ahead now that it was found.
+			if (match.target && (match.status === 'auto' || match.status === 'accepted')) {
+				const moved = this.db
+					.prepare(
+						`UPDATE downloads SET status = 'queued', attempts = 0, error = NULL, provider = ?
+						 WHERE track_id = ? AND status = 'needs_review'`
+					)
+					.run(match.target.service, trackId)
+				if (moved.changes) {
+					this.events.emit({ type: 'review' })
+					this.#pump()
+				}
+			}
+		}
+		const target = match?.target
+		if (!target || target.maxQuality) return
+		// Matched straight from the playlist's own service (a Qobuz or Deezer playlist): its quality comes with the track.
+		const { meta } = await (await this.accounts.downloader(target.service)).getTrack(target.url)
+		if (!meta.maxQuality) return
+		this.db
+			.prepare('UPDATE matches SET target_meta = ? WHERE track_id = ?')
+			.run(JSON.stringify({ ...target, maxQuality: meta.maxQuality }), trackId)
+	}
+
 	// ---------- review ----------
 
 	/**
@@ -206,12 +336,12 @@ export class DownloadQueue {
 		const queries = query?.trim() ? [query.trim()] : searchQueries(track)
 		const threshold = this.settings.get().autoAcceptThreshold
 		const downloaders = provider ? [await this.#downloaderFor(provider)] : await this.accounts.downloaders()
-		if (!downloaders.length) throw new Error('Conecta Qobuz o Deezer, o busca en YouTube')
+		if (!downloaders.length) throw new Error('Conecta Qobuz o Deezer, o busca en YouTube o SoundCloud')
 		const out: MatchCandidate[] = []
 		const failures: string[] = []
 		for (const d of downloaders) {
-			// YouTube titles are noisier: a convincing video there scores lower than a sure match elsewhere.
-			const enough = d.service === 'youtube' ? Math.min(threshold, YOUTUBE_MIN_SCORE) : threshold
+			// YouTube/SoundCloud titles are noisier: a convincing upload there scores lower than a sure match elsewhere.
+			const enough = isLossyService(d.service) ? Math.min(threshold, LOSSY_MIN_SCORE) : threshold
 			try {
 				out.push(...(await searchService(track, d, queries, enough)))
 			} catch (err) {
@@ -238,7 +368,7 @@ export class DownloadQueue {
 		for (const trackId of trackIds) {
 			try {
 				const best = (await this.youtubeCandidates(trackId))[0]
-				if (!best || best.score < YOUTUBE_MIN_SCORE) {
+				if (!best || best.score < LOSSY_MIN_SCORE) {
 					notFound++
 					continue
 				}
@@ -254,6 +384,9 @@ export class DownloadQueue {
 	/** Something to listen to a library track: its own service's audio when it has the full song, else YouTube. */
 	preview(trackId: number): Promise<TrackPreview | null> {
 		const track = this.library.getTrack(trackId)
+		// A SoundCloud track plays in SoundCloud's own player: it's that very upload.
+		const upload = sourceUpload(track)
+		if (upload) return Promise.resolve({ kind: 'soundcloud', url: upload.url, title: track.title })
 		return this.#listen(track.source, track, () => this.accounts.youtube.preview(track))
 	}
 
@@ -328,7 +461,7 @@ export class DownloadQueue {
 		const byIsrc = candidate.isrc ? await isrcMatch(recording, candidate.isrc, [d]) : null
 		if (byIsrc) return this.acceptCandidate(trackId, { ...byIsrc, score: candidate.score })
 		const threshold = this.settings.get().autoAcceptThreshold
-		const enough = provider === 'youtube' ? Math.min(threshold, YOUTUBE_MIN_SCORE) : threshold
+		const enough = isLossyService(provider) ? Math.min(threshold, LOSSY_MIN_SCORE) : threshold
 		const best = (await searchService(recording, d, searchQueries(recording), enough))[0]
 		if (!best || best.score < enough) {
 			throw new Error(`No encontré ese mismo tema en ${label}. Busca directamente en ${label} y elige uno de sus resultados.`)
@@ -337,9 +470,9 @@ export class DownloadQueue {
 		this.acceptCandidate(trackId, { ...best, score: Math.min(candidate.score, best.score) })
 	}
 
-	/** A download service the user picked by hand: it has to be connected (YouTube needs no account). */
+	/** A download service the user picked by hand: it has to be connected (YouTube and SoundCloud need no account). */
 	async #downloaderFor(provider: DownloadService) {
-		if (provider !== 'youtube' && !this.accounts.isConnected(provider)) {
+		if (!isLossyService(provider) && !this.accounts.isConnected(provider)) {
 			throw new Error(`${DOWNLOAD_SERVICE_LABEL[provider]} no está conectado`)
 		}
 		return this.accounts.downloader(provider)
@@ -384,41 +517,50 @@ export class DownloadQueue {
 		}
 	}
 
+	/** A provider was picked: the track is looked up there unless it's already matched to it. */
+	#isOtherProvider(match: StoredMatch | null, provider: DownloadService | null) {
+		return (
+			!!provider &&
+			(!match || !match.target || match.target.service !== provider || !['auto', 'accepted'].includes(match.status))
+		)
+	}
+
+	/** Look a track up on the download services (only on `provider`, if given) and store the result as its match. */
+	async #resolveAndStore(trackId: number, provider: DownloadService | null) {
+		const track = this.library.getTrack(trackId)
+		const downloaders = provider ? [await this.accounts.downloader(provider)] : await this.accounts.downloaders()
+		if (!downloaders.length) {
+			throw new Error('Conecta Qobuz o Deezer (o activa YouTube o SoundCloud en Ajustes) para poder descargar')
+		}
+		const res = await resolveTrack(track, downloaders, this.settings.get().autoAcceptThreshold, {
+			findIsrc: (t, minScore) => this.accounts.findIsrc(t, minScore)
+		})
+		this.db
+			.prepare(
+				`INSERT INTO matches (track_id, status, target_service, target_id, target_url, target_meta, confidence, candidates, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(track_id) DO UPDATE SET status = excluded.status, target_service = excluded.target_service,
+				   target_id = excluded.target_id, target_url = excluded.target_url, target_meta = excluded.target_meta,
+				   confidence = excluded.confidence, candidates = excluded.candidates, updated_at = excluded.updated_at`
+			)
+			.run(
+				trackId,
+				res.status,
+				res.target?.service ?? null,
+				res.target?.id ?? null,
+				res.target?.url ?? null,
+				res.target ? JSON.stringify(res.target) : null,
+				res.target?.score ?? null,
+				JSON.stringify(res.candidates),
+				now()
+			)
+		return this.#match(trackId)!
+	}
+
 	async #process(row: Row, signal: AbortSignal) {
 		const track = this.library.getTrack(row.track_id)
 		let match = this.#match(row.track_id)
-		// A provider was picked: look the track up there unless it's already matched to it.
-		const rematch =
-			row.provider &&
-			(!match || !match.target || match.target.service !== row.provider || !['auto', 'accepted'].includes(match.status))
-
-		if (!match || rematch) {
-			const downloaders = row.provider ? [await this.accounts.downloader(row.provider)] : await this.accounts.downloaders()
-			if (!downloaders.length) throw new Error('Conecta Qobuz o Deezer (o activa YouTube en Ajustes) para poder descargar')
-			const res = await resolveTrack(track, downloaders, this.settings.get().autoAcceptThreshold, {
-				findIsrc: (t, minScore) => this.accounts.findIsrc(t, minScore)
-			})
-			this.db
-				.prepare(
-					`INSERT INTO matches (track_id, status, target_service, target_id, target_url, target_meta, confidence, candidates, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-					 ON CONFLICT(track_id) DO UPDATE SET status = excluded.status, target_service = excluded.target_service,
-					   target_id = excluded.target_id, target_url = excluded.target_url, target_meta = excluded.target_meta,
-					   confidence = excluded.confidence, candidates = excluded.candidates, updated_at = excluded.updated_at`
-				)
-				.run(
-					row.track_id,
-					res.status,
-					res.target?.service ?? null,
-					res.target?.id ?? null,
-					res.target?.url ?? null,
-					res.target ? JSON.stringify(res.target) : null,
-					res.target?.score ?? null,
-					JSON.stringify(res.candidates),
-					now()
-				)
-			match = this.#match(row.track_id)!
-		}
+		if (!match || this.#isOtherProvider(match, row.provider)) match = await this.#resolveAndStore(row.track_id, row.provider)
 		signal.throwIfAborted()
 
 		if (match.status === 'skipped') return this.#setStatus(row.id, 'skipped')
@@ -442,9 +584,9 @@ export class DownloadQueue {
 			)
 
 		// Already downloaded for another playlist (or a previous run): link or copy instead of downloading again.
-		// YouTube titles/channels are not real metadata: name and tag the file after the source track instead.
+		// YouTube/SoundCloud titles and uploaders are not real metadata: name and tag the file after the source track instead.
 		const fromSource = (t: TargetTrack): TargetTrack =>
-			target.service === 'youtube'
+			isLossyService(target.service)
 				? {
 						...t,
 						title: track.title,
@@ -461,8 +603,10 @@ export class DownloadQueue {
 		const existing = this.db
 			.prepare('SELECT path, quality FROM files WHERE target_service = ? AND target_id = ? AND quality_level = ?')
 			.get(target.service, target.id, fileLevel) as { path: string; quality: string | null } | undefined
-		if (existing && fs.existsSync(existing.path)) {
-			const dest = nameFor(fromSource(target), path.extname(existing.path).slice(1))
+		const existingExt = existing ? path.extname(existing.path).slice(1).toLowerCase() : ''
+		// An MP3 was asked for: a file that came in another format (not converted back then) doesn't do.
+		if (existing && fs.existsSync(existing.path) && (level !== 'mp3_compat' || existingExt === 'mp3')) {
+			const dest = nameFor(fromSource(target), existingExt)
 			if (path.resolve(dest) !== path.resolve(existing.path)) {
 				await fsp.rm(dest, { force: true })
 				await fsp.link(existing.path, dest).catch(() => fsp.copyFile(existing.path, dest))
@@ -485,8 +629,13 @@ export class DownloadQueue {
 			audio.stream.destroy()
 			signal.throwIfAborted()
 		}
-		const dest = nameFor(meta, extensionFor(audio.mimeType))
+		const ext = extensionFor(audio.mimeType)
+		// An MP3 that plays anywhere was asked for and something else came (YouTube's AAC/Opus, a FLAC): convert it.
+		const convert = level === 'mp3_compat' && ext !== 'mp3'
+		const dest = nameFor(meta, convert ? 'mp3' : ext)
 		const part = `${dest}.part`
+		// When converting, the download goes to its own file and ffmpeg writes the .part.
+		const raw = convert ? `${dest}.download` : part
 		let bytes = 0
 		const counter = new Transform({
 			transform: (chunk: Buffer, _enc, cb) => {
@@ -496,12 +645,15 @@ export class DownloadQueue {
 			}
 		})
 		try {
-			await pipeline(audio.stream, counter, fs.createWriteStream(part), { signal })
+			await pipeline(audio.stream, counter, fs.createWriteStream(raw), { signal })
+			if (convert) await this.mp3.toMp3(raw, part, { lossless: ['flac', 'wav', 'aiff'].includes(ext), signal })
 			await fsp.rm(dest, { force: true })
 			await fsp.rename(part, dest)
 		} catch (err) {
 			await fsp.rm(part, { force: true })
 			throw err
+		} finally {
+			if (convert) await fsp.rm(raw, { force: true })
 		}
 
 		try {
@@ -549,7 +701,7 @@ export class DownloadQueue {
 		this.#emitRow(row.id)
 	}
 
-	#match(trackId: number) {
+	#match(trackId: number): StoredMatch | null {
 		const m = this.db.prepare('SELECT status, target_meta FROM matches WHERE track_id = ?').get(trackId) as
 			| { status: string; target_meta: string | null }
 			| undefined

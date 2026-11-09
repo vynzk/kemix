@@ -26,9 +26,13 @@ export function AccountsPage() {
 	return (
 		<div>
 			<PageHeader title="Cuentas">
-				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists;
-				YouTube además sirve de respaldo para descargar lo que no está en Qobuz ni Deezer.
+				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists.
+				SoundCloud importa tus playlists y Me gusta, y junto con YouTube sirve de respaldo para descargar lo que no está
+				en Qobuz ni Deezer.
 			</PageHeader>
+			<div className="px-8 pt-8">
+				<AccountsGuide connected={(s) => get(s).status === 'connected'} />
+			</div>
 			<div className="grid grid-cols-1 gap-4 p-8 xl:grid-cols-2">
 				<AccountCard account={get('qobuz')} role="Importar + descargar" download={download('qobuz')}>
 					<QobuzForm browserLogin={state.data?.browserLogin ?? false} />
@@ -39,7 +43,19 @@ export function AccountsPage() {
 				<AccountCard
 					account={get('spotify')}
 					role="Importar playlists y crear nuevas"
-					download={<p className="text-xs text-zinc-500">No descarga audio: sus temas se bajan desde Qobuz o Deezer.</p>}
+					download={
+						<div className="space-y-1.5 text-xs text-muted">
+							<p>
+								No descarga audio: sus temas se bajan desde Qobuz o Deezer y, si no están ahí, desde YouTube o
+								SoundCloud cuando lo pides.
+							</p>
+							<p className="rounded-md bg-ink/50 px-2.5 py-1.5">
+								<b className="text-zinc-300">Spotify Premium no cambia la calidad:</b> Kemix solo usa Spotify para leer y
+								crear playlists. La calidad depende de la cuenta desde la que se baja cada tema: tu plan de Qobuz o
+								Deezer, o YouTube Music Premium para el respaldo de YouTube.
+							</p>
+						</div>
+					}
 				>
 					<SpotifyForm
 						browserLogin={state.data?.browserLogin ?? false}
@@ -52,22 +68,104 @@ export function AccountsPage() {
 					role="Importar playlists (no oficial) + respaldo de descarga"
 					connectedExtra={<YtSwitchAccount />}
 					download={
-						<p className="text-xs text-muted">
-							Descarga desde YouTube hasta{' '}
-							<span className={qualityTone(qualities.data?.youtube ?? null)}>
-								{qualities.data?.youtube ? qualityLabel(qualities.data.youtube) : 'AAC ~128 kbps'}
-							</span>{' '}
-							(con pérdida). Solo como respaldo y cuando lo pides; no necesita esta cuenta.
-						</p>
+						<div className="space-y-1.5 text-xs text-muted">
+							<p>
+								Descarga desde YouTube hasta{' '}
+								<span className={qualityTone(qualities.data?.youtube ?? null)}>
+									{qualities.data?.youtube ? qualityLabel(qualities.data.youtube) : 'AAC ~128 kbps'}
+								</span>{' '}
+								(con pérdida). Solo como respaldo y cuando lo pides; funciona sin esta cuenta.
+							</p>
+							<YtPremiumNote
+								connected={get('ytmusic').status === 'connected'}
+								premium={(qualities.data?.youtube?.bitrateKbps ?? 0) >= 256}
+							/>
+						</div>
 					}
 				>
 					<YtMusicForm />
 				</AccountCard>
-				<ComingSoonCard name="SoundCloud" color="#ff5500" />
+				<AccountCard
+					account={get('soundcloud')}
+					role="Importar playlists y Me gusta + descargar"
+					download={
+						<SoundCloudDownloadNote
+							connected={get('soundcloud').status === 'connected'}
+							quality={qualities.data?.soundcloud}
+						/>
+					}
+				>
+					<SoundCloudForm browserLogin={state.data?.browserLogin ?? false} />
+				</AccountCard>
 				<ComingSoonCard name="Tidal" color="#e4e4e7" />
 				<ComingSoonCard name="Soundeo" color="#f5a623" />
 			</div>
 		</div>
+	)
+}
+
+/** The services, by what connecting them gives. */
+const GUIDE: { service: SourceService; imports: boolean; downloads: string | null }[] = [
+	{ service: 'qobuz', imports: true, downloads: 'FLAC hasta 24-bit/192 kHz' },
+	{ service: 'deezer', imports: true, downloads: 'FLAC o MP3, según tu plan' },
+	{ service: 'spotify', imports: true, downloads: null },
+	{ service: 'ytmusic', imports: true, downloads: null },
+	{ service: 'soundcloud', imports: true, downloads: 'La mejor de cada tema; con cuenta, originales y Go+' }
+]
+
+/** How accounts work: some only import playlists, others also download, and the more download accounts the better. */
+function AccountsGuide({ connected }: { connected: (s: SourceService) => boolean }) {
+	const downloaders = GUIDE.filter((g) => g.downloads)
+	const ready = downloaders.filter((g) => connected(g.service)).length
+	return (
+		<details open={ready < downloaders.length} className="rounded-xl border border-line bg-panel/60 px-5 py-4 text-sm">
+			<summary className="cursor-pointer font-medium select-none">
+				Cómo funcionan las cuentas{' '}
+				<span className={cx('ml-1 text-xs font-normal', ready ? 'text-emerald-300' : 'text-amber-300')}>
+					{ready} de {downloaders.length} cuentas de descarga conectadas
+				</span>
+			</summary>
+			<div className="mt-3 space-y-3 text-xs text-muted">
+				<p>
+					Cada cuenta que agregas sirve para algo distinto. Todas <b className="text-zinc-300">importan playlists</b>, pero
+					solo algunas además <b className="text-zinc-300">permiten descargar</b> el audio:
+				</p>
+				<ul className="grid gap-1.5 sm:grid-cols-2">
+					{GUIDE.map((g) => (
+						<li key={g.service} className="flex items-center gap-2 rounded-md bg-ink/50 px-3 py-2">
+							<span className="h-2 w-2 shrink-0 rounded-full" style={{ background: SERVICE_COLOR[g.service] }} />
+							<span className="font-medium text-zinc-200">{SERVICE_LABEL[g.service]}</span>
+							{g.downloads ? (
+								<span className="rounded bg-emerald-950 px-1.5 py-0.5 text-[11px] text-emerald-300" title={g.downloads}>
+									Importa + descarga
+								</span>
+							) : (
+								<span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300">Solo importa</span>
+							)}
+							{connected(g.service) && <span className="ml-auto text-[11px] text-emerald-300">✓ conectada</span>}
+						</li>
+					))}
+				</ul>
+				<p>
+					<b className="text-zinc-300">Conecta todas las cuentas de descarga que puedas.</b> Cada una es un catálogo más
+					donde buscar: si un tema no está en una, Kemix lo intenta en la siguiente (el orden se elige en Ajustes →
+					Prioridad de servicios, o con «Usar como predeterminado»). Así quedan menos temas sin descargar o en revisión.
+					Lo que no esté en ninguna puede bajarse de YouTube o SoundCloud: funcionan sin cuenta, pero con la de
+					SoundCloud conectada bajas los archivos originales y, con Go+, los temas completos en AAC 256.
+				</p>
+				<ol className="list-decimal space-y-1 pl-5">
+					<li>
+						Conecta el servicio donde tienes tus playlists (Spotify, YouTube Music, Qobuz, Deezer o SoundCloud) para
+						importarlas.
+					</li>
+					<li>Conecta Qobuz y/o Deezer para poder descargar en buena calidad, aunque tus playlists estén en otro lado.</li>
+					<li>
+						Al descargar, elige la calidad. Si solo quieres que la canción suene en cualquier reproductor (auto, parlante,
+						celular), usa <b className="text-zinc-300">MP3 compatible</b>.
+					</li>
+				</ol>
+			</div>
+		</details>
 	)
 }
 
@@ -121,7 +219,26 @@ function DownloadQuality(props: {
 	)
 }
 
-/** Placeholder for a service that isn't supported yet. */
+/** What SoundCloud downloads, and what connecting the account adds. */
+function SoundCloudDownloadNote({ connected, quality }: { connected: boolean; quality?: AudioQuality }) {
+	return (
+		<div className="space-y-1.5 text-xs text-muted">
+			<p>
+				Descarga la mejor calidad que tenga cada tema, hasta{' '}
+				<span className={qualityTone(quality ?? null)}>{quality ? qualityLabel(quality) : 'AAC 160 kbps'}</span> (con
+				pérdida), o el <b className="text-zinc-300">archivo original</b> que subió el artista si permite descargarlo (a
+				veces WAV o FLAC, sin pérdida). Como YouTube, es un respaldo: actívalo en Ajustes → Prioridad de servicios o
+				elígelo a mano al bajar o revisar un tema.
+			</p>
+			<p className={connected ? 'text-emerald-300/90' : ''}>
+				{connected
+					? 'Con tu cuenta conectada, las descargas y búsquedas van con tu sesión: originales reservados a usuarios registrados y, si tienes Go+, AAC 256 y los temas Go+ completos.'
+					: 'Funciona sin cuenta. Conéctala para importar tus playlists y Me gusta, bajar originales que SoundCloud reserva a usuarios registrados y, con Go+, AAC 256 y temas Go+ completos (sin cuenta solo traen 30 s y se descartan).'}
+			</p>
+		</div>
+	)
+}
+
 function ComingSoonCard({ name, color }: { name: string; color: string }) {
 	return (
 		<section className="rounded-xl border border-dashed border-line bg-panel/50 p-5 opacity-70">
@@ -297,6 +414,78 @@ function CookiesGuide({ site, rotating }: { site: string; rotating?: boolean }) 
 	)
 }
 
+function SoundCloudForm({ browserLogin }: { browserLogin: boolean }) {
+	const [cookie, setCookie] = useState('')
+	const connect = useConnect(api.connectSoundCloud)
+	const inBrowser = useConnect(api.connectSoundCloudInBrowser)
+	return (
+		<div className="space-y-3">
+			{browserLogin && (
+				<>
+					<p className="text-xs text-muted">
+						Se abrirá soundcloud.com en una ventana. Inicia sesión como siempre (email, Google o Apple); Kemix toma la
+						sesión y cierra la ventana solo.
+					</p>
+					<ErrorText error={inBrowser.error} />
+					<Button variant="primary" onClick={() => inBrowser.mutate()} disabled={inBrowser.isPending}>
+						{inBrowser.isPending ? 'Esperando a que inicies sesión…' : 'Iniciar sesión en SoundCloud'}
+					</Button>
+				</>
+			)}
+			<details className="text-xs" open={!browserLogin}>
+				<summary className="cursor-pointer text-muted select-none">
+					{browserLogin ? 'O conecta con las cookies del navegador' : 'Conectar con las cookies del navegador'}
+				</summary>
+				<form
+					className="mt-3 space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						connect.mutate(cookie)
+					}}
+				>
+					<Field
+						label="Cookies de soundcloud.com"
+						hint={
+							<>
+								Con la sesión iniciada en soundcloud.com, exporta las cookies y carga el archivo; Kemix toma la cookie{' '}
+								<code>oauth_token</code> sola. También puedes pegar solo su valor.
+							</>
+						}
+					>
+						<textarea
+							value={cookie}
+							onChange={(e) => setCookie(e.target.value)}
+							rows={3}
+							placeholder="Pega aquí el contenido de cookies.txt o el valor de oauth_token"
+							className="w-full rounded-md border border-line bg-ink px-3 py-1.5 font-mono text-xs focus:border-accent/60 focus:outline-none"
+						/>
+					</Field>
+					<CookiesGuide site="soundcloud.com" />
+					<ErrorText error={connect.error} />
+					<div className="flex items-center gap-2">
+						<Button variant="primary" type="submit" disabled={connect.isPending || cookie.trim().length < 20}>
+							{connect.isPending ? 'Conectando…' : 'Conectar SoundCloud'}
+						</Button>
+						<label className="cursor-pointer rounded-md border border-line px-3 py-1.5 text-sm hover:bg-zinc-800">
+							Cargar archivo…
+							<input
+								type="file"
+								accept=".txt,.json"
+								className="hidden"
+								onChange={async (e) => {
+									const file = e.target.files?.[0]
+									if (file) setCookie(await file.text())
+									e.target.value = ''
+								}}
+							/>
+						</label>
+					</div>
+				</form>
+			</details>
+		</div>
+	)
+}
+
 function DeezerForm() {
 	const [arl, setArl] = useState('')
 	const connect = useConnect(api.connectDeezer)
@@ -440,6 +629,27 @@ function SpotifyApiSteps({ redirectUri }: { redirectUri: string }) {
 			</li>
 			<li>Copia el Client ID aquí y pulsa Conectar; se abrirá el navegador para autorizar.</li>
 		</ol>
+	)
+}
+
+/** What YouTube Music Premium does for downloads, worded for the account that's connected (or none). */
+function YtPremiumNote({ connected, premium }: { connected: boolean; premium: boolean }) {
+	if (connected && premium) {
+		return (
+			<p className="rounded-md bg-emerald-950/60 px-2.5 py-1.5 text-emerald-300">
+				Tu cuenta tiene YouTube Music Premium: las descargas de YouTube suben de AAC ~128 a{' '}
+				<b>AAC 256 kbps</b>, el doble de bitrate.
+			</p>
+		)
+	}
+	return (
+		<p className="rounded-md bg-ink/50 px-2.5 py-1.5">
+			<b className="text-zinc-300">Con YouTube Music Premium sube la calidad:</b> si la cuenta conectada es Premium,
+			las descargas de YouTube salen en AAC 256 kbps en vez de ~128 (el doble de bitrate).{' '}
+			{connected
+				? 'La cuenta elegida no tiene Premium; si otra de tus cuentas de Google sí lo tiene, cámbiate a ella.'
+				: 'Conectar la cuenta es opcional, pero sin ella se queda en ~128.'}
+		</p>
 	)
 }
 

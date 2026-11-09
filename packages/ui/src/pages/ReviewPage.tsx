@@ -3,11 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, MatchCandidate, ReviewItem } from '@kemix/core'
 import { api } from '../lib/api'
 import { useDownloadProviders } from '../lib/hooks'
-import { SERVICE_LABEL, cx, duration, qualityLabel, qualityTone } from '../lib/format'
+import { LOSSY_NOTE, SERVICE_LABEL, cx, duration, isLossy, qualityLabel, qualityTone } from '../lib/format'
 import { Button, Cover, Empty, ErrorText, Input, PageHeader, Select, ServiceDot } from '../components/ui'
 import { PlayButton, candidateKey, usePlayer } from '../components/Player'
-
-const YOUTUBE_NOTE = 'No es calidad máxima: AAC ~128 kbps, con pérdida.'
 
 export function ReviewPage() {
 	const qc = useQueryClient()
@@ -32,7 +30,7 @@ export function ReviewPage() {
 							<Button onClick={() => bulk.mutate()} disabled={bulk.isPending}>
 								{bulk.isPending ? 'Buscando en YouTube…' : `Bajar no encontrados desde YouTube (${notFound.length})`}
 							</Button>
-							<span className="text-[11px] text-amber-300/80">{YOUTUBE_NOTE}</span>
+							<span className="text-[11px] text-amber-300/80">{LOSSY_NOTE.youtube}</span>
 						</div>
 					)
 				}
@@ -65,7 +63,7 @@ function providerOption(s: DownloadService, prefix = '') {
 		<option key={s} value={s}>
 			{prefix}
 			{SERVICE_LABEL[s]}
-			{s === 'youtube' ? ' (con pérdida)' : ''}
+			{isLossy(s) ? ' (con pérdida)' : ''}
 		</option>
 	)
 }
@@ -79,7 +77,7 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 	/** '' = each candidate from its own service. */
 	const [downloadFrom, setDownloadFrom] = useState<DownloadService | ''>('')
 	const [results, setResults] = useState<{ from: DownloadService | ''; list: MatchCandidate[] } | null>(null)
-	/** Candidate waiting for the user to confirm a lossy (YouTube) download. */
+	/** Candidate waiting for the user to confirm a lossy (YouTube/SoundCloud) download. */
 	const [confirming, setConfirming] = useState<string | null>(null)
 	// A provider disconnected since it was picked falls back to automatic.
 	const searchFrom = searchIn && providers.includes(searchIn) ? searchIn : ''
@@ -102,7 +100,8 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 	const busy = accept.isPending || skip.isPending
 	/** Where a candidate would actually be downloaded from. */
 	const downloadService = (c: MatchCandidate) => from || c.service
-	const lossyShown = from === 'youtube' || (!from && candidates.some((c) => c.service === 'youtube'))
+	/** Lossy services the shown options would download from, to warn about their quality. */
+	const lossyShown = [...new Set(candidates.map(downloadService))].filter(isLossy)
 
 	return (
 		// minmax(0, …) and min-w-0 on both columns: long titles truncate instead of widening the page.
@@ -181,15 +180,15 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 					</Button>
 				</form>
 				<ErrorText error={search.error ?? accept.error ?? skip.error} />
-				{(results || lossyShown) && (
+				{(results || lossyShown.length > 0) && (
 					<p className="text-xs text-muted">
 						{results && (results.from ? `Resultados en ${SERVICE_LABEL[results.from]}` : 'Resultados')}
-						{lossyShown && (
-							<span className="text-amber-300/80">
-								{results && ' · '}
-								YouTube: {YOUTUBE_NOTE}
+						{lossyShown.map((s, i) => (
+							<span key={s} className="text-amber-300/80">
+								{(results || i > 0) && ' · '}
+								{SERVICE_LABEL[s]}: {LOSSY_NOTE[s]}
 							</span>
-						)}
+						))}
 					</p>
 				)}
 				{candidates.length === 0 ? (
@@ -215,8 +214,8 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 										</>
 									) : (
 										<Button
-											variant={service === 'youtube' ? 'default' : 'primary'}
-											onClick={() => (service === 'youtube' ? setConfirming(key) : accept.mutate(c))}
+											variant={isLossy(service) ? 'default' : 'primary'}
+											onClick={() => (isLossy(service) ? setConfirming(key) : accept.mutate(c))}
 											disabled={busy}
 											title={
 												service === c.service

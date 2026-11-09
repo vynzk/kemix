@@ -1,11 +1,14 @@
 import type { Downloader } from '../download/lucida-adapter'
 import type { DownloadService, MatchCandidate, MatchStatus, SourceService, SourceTrack, TargetService } from '../types'
-import { DOWNLOAD_SERVICE_LABEL, isTargetService } from '../types'
+import { DOWNLOAD_SERVICE_LABEL, isLossyService, isTargetService } from '../types'
 import { errorMessage } from '../util'
 import { scoreMatch, scoreYouTube, searchQueries } from './score'
 
-/** A YouTube video scoring at least this is taken as the song (titles there are noisier than on Qobuz/Deezer). */
-export const YOUTUBE_MIN_SCORE = 0.6
+/**
+ * A YouTube video or SoundCloud upload scoring at least this is taken as the song (titles there are noisier than on
+ * Qobuz/Deezer, and uploaders stand in for artists).
+ */
+export const LOSSY_MIN_SCORE = 0.6
 /** Below this the best candidate is noise (another song by the artist, a namesake…): the track counts as not found. */
 export const NOT_FOUND_BELOW = 0.5
 
@@ -24,7 +27,7 @@ export interface ResolveOptions {
 }
 
 export function scorerFor(service: DownloadService) {
-	return service === 'youtube' ? scoreYouTube : scoreMatch
+	return isLossyService(service) ? scoreYouTube : scoreMatch
 }
 
 /**
@@ -98,8 +101,8 @@ export async function resolveTrack(
 	const candidates: MatchCandidate[] = []
 	const failures: string[] = []
 	for (const [rank, d] of downloaders.entries()) {
-		// Once YouTube has a convincing video, more searches there won't find a better one.
-		const enough = d.service === 'youtube' ? Math.min(threshold, YOUTUBE_MIN_SCORE) : threshold
+		// Once YouTube/SoundCloud have a convincing upload, more searches there won't find a better one.
+		const enough = isLossyService(d.service) ? Math.min(threshold, LOSSY_MIN_SCORE) : threshold
 		let found: MatchCandidate[]
 		try {
 			found = await searchService(track, d, queries, enough)
@@ -113,7 +116,7 @@ export async function resolveTrack(
 		candidates.push(...found.map((c) => ({ ...c, score: Math.max(0, c.score - rank * 0.001) })))
 	}
 
-	if (!track.isrc && opts.findIsrc && downloaders.some((d) => d.service !== 'youtube')) {
+	if (!track.isrc && opts.findIsrc && downloaders.some((d) => !isLossyService(d.service))) {
 		const found = await opts.findIsrc(track, threshold).catch(() => null)
 		const hit = found && (await isrcMatch(track, found.isrc, downloaders))
 		if (found && hit) return { status: 'auto', target: { ...hit, score: Math.max(hit.score, found.score) }, candidates: [] }
@@ -125,10 +128,11 @@ export async function resolveTrack(
 		if (failures.length) throw new Error(`No se pudo buscar el tema (${failures.join(' · ')})`)
 		return { status: 'notfound', target: null, candidates: best }
 	}
-	// YouTube is in the user's list: when no lossless service has anything close, take a convincing video.
-	const video = best.find((c) => c.service === 'youtube')
-	const lossless = best.some((c) => c.service !== 'youtube' && c.score >= YOUTUBE_MIN_SCORE)
-	if (video && video.score >= YOUTUBE_MIN_SCORE && !lossless) return { status: 'auto', target: video, candidates: best }
+	// YouTube/SoundCloud are in the user's list: when no lossless service has anything close, take a convincing upload
+	// (the best one: candidates are sorted, with the preferred service winning ties).
+	const lossy = best.find((c) => isLossyService(c.service))
+	const lossless = best.some((c) => !isLossyService(c.service) && c.score >= LOSSY_MIN_SCORE)
+	if (lossy && lossy.score >= LOSSY_MIN_SCORE && !lossless) return { status: 'auto', target: lossy, candidates: best }
 	return { status: 'pending', target: null, candidates: best }
 }
 
@@ -165,4 +169,44 @@ function dedupe(list: MatchCandidate[]): MatchCandidate[] {
 		seen.add(key)
 		return true
 	})
+}
+
+/** A track listed by a source service, in the shape the scorers compare (only title, artists, duration and ISRC count). */
+function asTarget(t: SourceTrack, service: DownloadService): MatchCandidate {
+	return { ...t, service, id: t.sourceId, url: t.url ?? '', score: 0 }
+}
+
+/**
+ * The same song in another service's catalog, looked up with `search` (that service's search). `track` may come from
+ * a noisy catalog (SoundCloud: uploaders as artists, "(Free Download)" in titles…), so each result is scored both as
+ * a regular match and as if `track` were the upload: whichever reading fits best counts.
+ * Null when nothing scores at least `minScore`. Throws only when every search failed.
+ */
+export async function findInCatalog(
+	track: SourceTrack,
+	search: (query: string) => Promise<SourceTrack[]>,
+	minScore = LOSSY_MIN_SCORE
+): Promise<SourceTrack | null> {
+	let best: { track: SourceTrack; score: number } | null = null
+	const queries = searchQueries(track)
+	let failed = 0
+	let lastError: unknown
+	for (const query of queries) {
+		let results: SourceTrack[]
+		try {
+			results = await search(query)
+		} catch (err) {
+			failed++
+			lastError = err
+			continue
+		}
+		for (const r of results) {
+			const score = Math.max(scoreMatch(track, asTarget(r, 'qobuz')), scoreYouTube(r, asTarget(track, 'soundcloud')))
+			if (!best || score > best.score) best = { track: r, score }
+		}
+		// A sure match: more searches won't find a better one.
+		if (best && best.score >= 0.9) break
+	}
+	if (failed === queries.length) throw lastError
+	return best && best.score >= minScore ? best.track : null
 }

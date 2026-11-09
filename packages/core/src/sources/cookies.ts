@@ -49,6 +49,20 @@ function parseJson(s: string) {
 	return arr.map((c) => ({ name: c.name, value: c.value, domain: c.domain, expires: c.expirationDate ?? c.expires }))
 }
 
+/**
+ * A `Cookie` header as a Netscape cookies.txt for the given domain and its subdomains (what yt-dlp's --cookies reads).
+ * All cookies are marked secure and given the same expiry: the header doesn't carry those details.
+ */
+export function toNetscapeCookies(header: string, domain: string, expires: number): string {
+	const lines = ['# Netscape HTTP Cookie File']
+	for (const part of header.split(/;\s*/)) {
+		const i = part.indexOf('=')
+		if (i <= 0) continue
+		lines.push([`.${domain.replace(/^\./, '')}`, 'TRUE', '/', 'TRUE', Math.floor(expires), part.slice(0, i), part.slice(i + 1)].join('\t'))
+	}
+	return `${lines.join('\n')}\n`
+}
+
 export function getCookie(header: string, name: string): string | undefined {
 	for (const part of header.split(/;\s*/)) {
 		const i = part.indexOf('=')

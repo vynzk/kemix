@@ -9,6 +9,11 @@ function codecFor(ext: string, description: string): AudioQuality['codec'] {
 	switch (ext) {
 		case 'flac':
 			return 'flac'
+		case 'wav':
+			return 'wav'
+		case 'aiff':
+		case 'aif':
+			return 'aiff'
 		case 'mp3':
 			return 'mp3'
 		case 'm4a':
@@ -32,7 +37,7 @@ export function readFileQuality(filePath: string): AudioQuality | null {
 			const p = file.properties
 			const description = p?.description ?? ''
 			const codec = codecFor(path.extname(filePath).slice(1).toLowerCase(), description)
-			const lossless = codec === 'flac' || codec === 'alac'
+			const lossless = codec === 'flac' || codec === 'alac' || codec === 'wav' || codec === 'aiff'
 			// Some containers (YouTube's DASH m4a) don't state a bitrate: derive the average from size and duration.
 			let bitrate = p?.audioBitrate || 0
 			if (!bitrate && p?.durationMilliseconds) bitrate = (fs.statSync(filePath).size * 8) / p.durationMilliseconds

@@ -36,6 +36,7 @@ async function startBackend(): Promise<number> {
 		uiDir: isDev ? undefined : path.join(process.resourcesPath, 'ui'),
 		browserLogin: {
 			qobuz: captureQobuzSession,
+			soundcloud: captureSoundCloudSession,
 			spotify: {
 				token: captureSpotifySession,
 				logout: () => session.fromPartition(SPOTIFY_PARTITION).clearStorageData()
@@ -104,6 +105,56 @@ function captureQobuzSession(): Promise<string> {
 	})
 	void win.loadURL('https://play.qobuz.com/login')
 	qobuzLogin = { win, promise }
+	return promise
+}
+
+let soundcloudLogin: { win: BrowserWindow; promise: Promise<string> } | undefined
+
+/**
+ * Open soundcloud.com's sign-in in a window (email, Google, Apple… whatever the user uses) and wait for the
+ * `oauth_token` cookie it sets once signed in. Its own in-memory session, cleared afterwards: the token then lives
+ * (encrypted) in Kemix.
+ */
+function captureSoundCloudSession(): Promise<string> {
+	if (soundcloudLogin && !soundcloudLogin.win.isDestroyed()) {
+		soundcloudLogin.win.focus()
+		return soundcloudLogin.promise
+	}
+	const ses = session.fromPartition('kemix-soundcloud-login')
+	const win = new BrowserWindow({
+		width: 1100,
+		height: 820,
+		title: 'Inicia sesión en SoundCloud',
+		parent: BrowserWindow.getAllWindows()[0],
+		autoHideMenuBar: true,
+		webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true }
+	})
+	win.webContents.setUserAgent(win.webContents.getUserAgent().replace(/\s(Electron|kemix|@kemix\/desktop)\/\S+/gi, ''))
+
+	const promise = new Promise<string>((resolve, reject) => {
+		let done = false
+		const check = async () => {
+			if (done) return
+			const [cookie] = await ses.cookies.get({ domain: 'soundcloud.com', name: 'oauth_token' })
+			if (!cookie?.value || done) return
+			done = true
+			resolve(cookie.value)
+			setImmediate(() => !win.isDestroyed() && win.close())
+		}
+		const onChanged = (_e: unknown, cookie: Electron.Cookie, _cause: string, removed: boolean) => {
+			if (!removed && cookie.name === 'oauth_token') void check()
+		}
+		ses.cookies.on('changed', onChanged)
+		win.on('closed', () => {
+			ses.cookies.off('changed', onChanged)
+			soundcloudLogin = undefined
+			if (!done) reject(new Error('Se cerró la ventana de SoundCloud antes de iniciar sesión'))
+			void ses.clearStorageData()
+		})
+		void check()
+	})
+	void win.loadURL('https://soundcloud.com/signin')
+	soundcloudLogin = { win, promise }
 	return promise
 }
 

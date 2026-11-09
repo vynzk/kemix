@@ -19,13 +19,16 @@ import type {
 } from './types'
 import { SOURCE_SERVICES } from './types'
 import { sourceVideo } from './sources/youtube'
+import { sourceUpload } from './sources/soundcloud'
+import { findInCatalog } from './match/resolve'
 import { errorMessage, now, SessionExpiredError } from './util'
 
 const SERVICE_NAMES: Record<SourceService, string> = {
 	spotify: 'Spotify',
 	ytmusic: 'YouTube Music',
 	qobuz: 'Qobuz',
-	deezer: 'Deezer'
+	deezer: 'Deezer',
+	soundcloud: 'SoundCloud'
 }
 
 interface PlaylistRow {
@@ -156,6 +159,41 @@ export class Library {
 			| { id: number }
 			| undefined
 		return { playlistId: row?.id ?? null }
+	}
+
+	/**
+	 * Create a playlist on `to` with tracks found on another service (SoundCloud doesn't let other apps create
+	 * playlists): each track is looked up in `to`'s catalog, and the ones it doesn't have are left out and returned.
+	 */
+	async copyPlaylist(
+		to: SourceService,
+		name: string,
+		tracks: SourceTrack[]
+	): Promise<{ playlistId: number | null; added: number; missing: SourceTrack[] }> {
+		const target = this.#connected(to)
+		if (!name.trim()) throw new Error('Ponle un nombre a la playlist')
+		if (!tracks.length) throw new Error('Agrega al menos un tema')
+		const ids: string[] = []
+		const missing: SourceTrack[] = []
+		const failures: string[] = []
+		for (const track of tracks) {
+			try {
+				const found = await findInCatalog(track, (q) => target.search(q, 10))
+				if (found) ids.push(found.sourceId)
+				else missing.push(track)
+			} catch (err) {
+				missing.push(track)
+				failures.push(errorMessage(err))
+			}
+		}
+		if (!ids.length) {
+			if (failures.length) throw new Error(`No se pudo buscar en ${SERVICE_NAMES[to]}: ${failures[0]}`)
+			throw new Error(`Ninguno de los temas está en ${SERVICE_NAMES[to]}`)
+		}
+		// The same song picked twice (two uploads of it) goes in once.
+		const unique = [...new Set(ids)]
+		const res = await this.createPlaylist(to, name, unique)
+		return { ...res, added: unique.length, missing }
 	}
 
 	/**
@@ -467,7 +505,7 @@ export class Library {
 	listReview(): ReviewItem[] {
 		const rows = this.db
 			.prepare(
-				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, m.candidates, m.status,
+				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, t.url, m.candidates, m.status,
 				   (SELECT json_group_array(DISTINCT p.name) FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
 				    WHERE pt.track_id = t.id) AS playlists
 				 FROM matches m JOIN tracks t ON t.id = m.track_id
@@ -484,6 +522,7 @@ export class Library {
 			source: SourceService
 			source_id: string
 			cover_url: string | null
+			url: string | null
 			candidates: string | null
 			status: MatchStatus
 			playlists: string
@@ -491,19 +530,22 @@ export class Library {
 		return rows.map((r) => {
 			const artists = JSON.parse(r.artists) as string[]
 			let candidates = r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : []
-			// A YouTube Music track is a video already: always offer that exact one (lossy), on top. Added here rather
-			// than when matching so it shows even when YouTube isn't among the download services.
-			const video = sourceVideo({
+			// A YouTube Music track is a video already, and a SoundCloud one an upload: always offer that exact one
+			// (lossy), on top. Added here rather than when matching so it shows even when YouTube/SoundCloud aren't
+			// among the download services.
+			const track = {
 				source: r.source,
 				sourceId: r.source_id,
 				title: r.title,
 				artists,
 				album: r.album ?? undefined,
 				durationMs: r.duration_ms ?? undefined,
-				coverUrl: r.cover_url ?? undefined
-			})
-			if (video) {
-				candidates = [{ ...video, score: 1 }, ...candidates.filter((c) => !(c.service === 'youtube' && c.id === video.id))]
+				coverUrl: r.cover_url ?? undefined,
+				url: r.url ?? undefined
+			}
+			const own = sourceVideo(track) ?? sourceUpload(track)
+			if (own) {
+				candidates = [{ ...own, score: 1 }, ...candidates.filter((c) => !(c.service === own.service && c.id === own.id))]
 			}
 			return {
 				trackId: r.id,

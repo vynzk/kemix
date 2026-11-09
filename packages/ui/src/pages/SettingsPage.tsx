@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, Settings } from '@kemix/core'
 import { api } from '../lib/api'
-import { QUALITY_LEVEL_OPTIONS, SERVICE_LABEL } from '../lib/format'
+import { QUALITY_LEVEL_OPTIONS, SERVICE_LABEL, isLossy } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 /** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
-const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'youtube']
+const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'youtube', 'soundcloud']
 
 export function SettingsPage() {
 	const qc = useQueryClient()
@@ -50,14 +50,14 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas."
+					hint="En modo automático se busca primero en el de arriba. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
 							<li key={s} className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm">
 								<span className="flex-1">
 									{i + 1}. {SERVICE_LABEL[s]}
-									{s === 'youtube' && <span className="ml-1 text-xs text-amber-300/80">con pérdida</span>}
+									{isLossy(s) && <span className="ml-1 text-xs text-amber-300/80">con pérdida</span>}
 								</span>
 								<Button type="button" variant="ghost" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Subir">
 									↑
@@ -91,7 +91,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Calidad de descarga"
-					hint={`${QUALITY_LEVEL_OPTIONS.find((o) => o.value === draft.downloadQuality)?.hint ?? ''} Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. Cada playlist puede elegir otra al descargar. YouTube siempre es AAC ~128 kbps.`}
+					hint={`${QUALITY_LEVEL_OPTIONS.find((o) => o.value === draft.downloadQuality)?.hint ?? ''} Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. Cada playlist puede elegir otra al descargar. YouTube siempre es AAC ~128 kbps, salvo con «MP3 compatible».`}
 				>
 					<select
 						value={draft.downloadQuality}
@@ -133,7 +133,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Ruta de yt-dlp (opcional)"
-					hint="Solo para bajar desde YouTube los temas que no están en Qobuz/Deezer. Vacío: Kemix baja y mantiene al día su propia copia de yt-dlp la primera vez que la necesita."
+					hint="Solo para bajar desde YouTube o SoundCloud los temas que no están en Qobuz/Deezer. Vacío: Kemix baja y mantiene al día su propia copia de yt-dlp la primera vez que la necesita."
 				>
 					<Input
 						placeholder="C:\ruta\a\yt-dlp.exe"

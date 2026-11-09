@@ -26,6 +26,10 @@ const MIME_EXT: Record<string, string> = {
 	'audio/mp4': 'm4a',
 	'audio/aac': 'm4a',
 	'audio/ogg': 'ogg',
+	'audio/wav': 'wav',
+	'audio/x-wav': 'wav',
+	'audio/aiff': 'aiff',
+	'audio/x-aiff': 'aiff',
 	'audio/webm': 'webm'
 }
 

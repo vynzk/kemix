@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DownloadService, PlaylistTrackRow, QualityLevel } from '@kemix/core'
+import type { AudioQuality, DownloadService, PlaylistTrackRow, QualityLevel, ScanState } from '@kemix/core'
 import { api } from '../lib/api'
 import { useDownloadProviders, useDownloadQualities } from '../lib/hooks'
 import {
@@ -8,10 +8,14 @@ import {
 	SERVICE_LABEL,
 	cx,
 	duration,
+	expectedQuality,
 	fitQualityLevel,
+	isLossy,
 	providerQualityOptions,
 	qualityLabel,
-	qualityTone
+	qualityTier,
+	qualityTone,
+	type QualityTier
 } from '../lib/format'
 import { Button, Cover, ErrorText, MatchLabel, RemoveDownloadButton, ServiceDot, StatusPill } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
@@ -44,6 +48,20 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 		onSuccess: () => setSelected(new Set()),
 		onSettled: invalidate
 	})
+	const scanState = useQuery({ queryKey: ['scan', id], queryFn: () => api.scanState(id) })
+	const scan = useMutation({
+		mutationFn: (positions?: number[]) => api.scanPlaylist(id, positions, provider || null),
+		onSuccess: (res) => qc.setQueryData(['scan', id], res)
+	})
+	const scanRun = scanState.data?.scan?.running ? scanState.data.scan : null
+	const scanning = scan.isPending || !!scanRun
+	/** What each track would come out in, given the provider and quality picked (null: not looked up yet). */
+	const expected = (t: PlaylistTrackRow): AudioQuality | null => {
+		const max = t.match?.maxQuality
+		const service = t.match?.targetService
+		if (!max || !service) return null
+		return expectedQuality(max, service, provider ? quality : wanted, accountQualities?.[service])
+	}
 	const resync = useMutation({ mutationFn: () => api.resyncPlaylist(id), onSettled: invalidate })
 	const remove = useMutation({
 		mutationFn: api.removeDownload,
@@ -87,7 +105,9 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 			</div>
 			{playlist.isLoading && <p className="px-8 py-10 text-sm text-muted">Cargando temas…</p>}
 			<div className="px-8">
-				<ErrorText error={playlist.error ?? download.error ?? resync.error ?? retryWith.error ?? remove.error} />
+				<ErrorText
+					error={playlist.error ?? download.error ?? scan.error ?? resync.error ?? retryWith.error ?? remove.error}
+				/>
 			</div>
 			{p && (
 				<>
@@ -124,7 +144,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								{providers.map((s) => (
 									<option key={s} value={s}>
 										{SERVICE_LABEL[s]}
-										{s === 'youtube' ? ' (con pérdida)' : ''}
+										{isLossy(s) ? ' (con pérdida)' : ''}
 									</option>
 								))}
 							</select>
@@ -133,7 +153,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								onChange={(e) => setLevel(e.target.value as QualityLevel)}
 								disabled={qualityOptions.length < 2}
 								className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm disabled:opacity-60"
-								title={`${provider ? `Calidades que ofrece ${SERVICE_LABEL[provider]}${provider !== 'youtube' && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. No cambia los temas ya descargados.`}
+								title={`${provider ? `Calidades que ofrece ${SERVICE_LABEL[provider]}${!isLossy(provider) && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. No cambia los temas ya descargados.`}
 							>
 								{qualityOptions.map((o) => (
 									<option key={o.value} value={o.value}>
@@ -141,6 +161,17 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 									</option>
 								))}
 							</select>
+							<Button
+								onClick={() => scan.mutate(selected.size > 0 ? [...selected] : undefined)}
+								disabled={scanning}
+								title="Busca los temas en el proveedor elegido y muestra en qué calidad se descargaría cada uno, sin descargar nada. Los temas ya descargados no se vuelven a buscar."
+							>
+								{scanning
+									? `Escaneando…${scanRun ? ` ${scanRun.done}/${scanRun.total}` : ''}`
+									: selected.size > 0
+										? `Escanear calidad (${selected.size})`
+										: 'Escanear calidad'}
+							</Button>
 							{selected.size > 0 ? (
 								<Button variant="primary" onClick={() => download.mutate([...selected])} disabled={download.isPending}>
 									{download.isPending ? 'Encolando…' : `Descargar selección (${selected.size})`}
@@ -152,6 +183,15 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 							)}
 						</div>
 					</header>
+
+					{scanState.data?.scan && (
+						<ScanSummary
+							scan={scanState.data.scan}
+							tracks={tracks}
+							expected={expected}
+							onSelect={(positions) => setSelected(new Set(positions))}
+						/>
+					)}
 
 					{failed.length > 0 && (
 						<RetryWithProvider
@@ -248,7 +288,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 											)}
 										</td>
 										<td className="py-2 pr-4 whitespace-nowrap">
-											<QualityCell track={t} />
+											<QualityCell track={t} expected={expected(t)} />
 										</td>
 										<td className="py-2 pr-4">
 											{t.download && (
@@ -277,8 +317,11 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 	)
 }
 
-/** Downloaded quality and the provider it came from when there's a file; otherwise the best the matched service offers. */
-function QualityCell({ track }: { track: PlaylistTrackRow }) {
+/**
+ * Downloaded quality and the provider it came from when there's a file; otherwise the best the matched service
+ * offers, and what the download would come out in when the quality picked or the account caps it.
+ */
+function QualityCell({ track, expected }: { track: PlaylistTrackRow; expected: AudioQuality | null }) {
 	const done = track.download?.status === 'done' ? track.download : null
 	if (done && (done.quality || done.service)) {
 		return (
@@ -297,6 +340,18 @@ function QualityCell({ track }: { track: PlaylistTrackRow }) {
 		)
 	}
 	const max = track.match?.maxQuality
+	const capped = max && expected && qualityLabel(expected) !== qualityLabel(max) ? expected : null
+	if (max && capped) {
+		return (
+			<span
+				className="text-xs text-muted"
+				title={`El tema está hasta en ${qualityLabel(max)}; con la calidad elegida y tu cuenta se bajaría en ${qualityLabel(capped)}`}
+			>
+				<span className={qualityTone(capped)}>{qualityLabel(capped)}</span>
+				<span className="text-zinc-500"> (máx. {qualityLabel(max)})</span>
+			</span>
+		)
+	}
 	if (max) {
 		return (
 			<span className="text-xs text-muted" title="Máxima calidad disponible para descargar">
@@ -305,6 +360,85 @@ function QualityCell({ track }: { track: PlaylistTrackRow }) {
 		)
 	}
 	return <span className="text-xs text-zinc-600">–</span>
+}
+
+type ScanGroup = QualityTier | 'pending' | 'notfound' | 'unknown' | 'done'
+
+const SCAN_GROUPS: { key: ScanGroup; label: string; cls: string }[] = [
+	{ key: 'hires', label: 'Hi-Res', cls: 'text-sky-300' },
+	{ key: 'cd', label: 'Calidad CD', cls: 'text-emerald-300' },
+	{ key: 'lossy', label: 'Con pérdida', cls: 'text-amber-300' },
+	{ key: 'pending', label: 'Dudosos (a revisar)', cls: 'text-amber-300' },
+	{ key: 'notfound', label: 'No encontrados', cls: 'text-red-300' },
+	{ key: 'unknown', label: 'Sin escanear', cls: 'text-muted' },
+	{ key: 'done', label: 'Ya descargados', cls: 'text-muted' }
+]
+
+function scanGroup(t: PlaylistTrackRow, expected: AudioQuality | null): ScanGroup {
+	if (t.download?.status === 'done') return 'done'
+	if (expected) return qualityTier(expected)
+	if (t.match?.status === 'pending') return 'pending'
+	if (t.match?.status === 'notfound') return 'notfound'
+	return 'unknown'
+}
+
+/** Scan progress and, per quality, how many tracks would come out in it; each count selects those tracks. */
+function ScanSummary(props: {
+	scan: ScanState
+	tracks: PlaylistTrackRow[]
+	expected: (t: PlaylistTrackRow) => AudioQuality | null
+	onSelect: (positions: number[]) => void
+}) {
+	const { scan } = props
+	const groups = new Map<ScanGroup, number[]>()
+	for (const t of props.tracks) {
+		const g = scanGroup(t, props.expected(t))
+		groups.set(g, [...(groups.get(g) ?? []), t.position])
+	}
+	return (
+		<div className="mx-8 mt-4 space-y-2 rounded-md border border-line bg-panel px-4 py-2.5 text-sm">
+			<p className="text-muted">
+				{scan.running
+					? `Escaneando calidad… ${scan.done} de ${scan.total} temas`
+					: scan.total === 0
+						? 'Escaneo de calidad: no había temas nuevos que buscar.'
+						: `Escaneo de calidad terminado: ${scan.total} ${scan.total === 1 ? 'tema buscado' : 'temas buscados'}.`}
+				{scan.failed > 0 && (
+					<span className="text-red-300">
+						{' '}
+						{scan.failed} no se pudieron buscar{scan.error ? ` (${scan.error})` : ''}.
+					</span>
+				)}
+				{!scan.running && ' Calidad en que se descargarían con el proveedor y la calidad elegidos (clic para seleccionarlos):'}
+			</p>
+			{scan.running && (
+				<div className="h-1 overflow-hidden rounded bg-line">
+					<div
+						className="h-full bg-[var(--color-accent)] transition-all"
+						style={{ width: `${scan.total ? (scan.done / scan.total) * 100 : 100}%` }}
+					/>
+				</div>
+			)}
+			<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+				{SCAN_GROUPS.filter((g) => groups.get(g.key)?.length).map((g) =>
+					g.key === 'done' ? (
+						<span key={g.key} className={g.cls}>
+							{g.label}: {groups.get(g.key)!.length}
+						</span>
+					) : (
+						<button
+							key={g.key}
+							className={cx(g.cls, 'hover:underline')}
+							title="Seleccionar estos temas"
+							onClick={() => props.onSelect(groups.get(g.key)!)}
+						>
+							{g.label}: {groups.get(g.key)!.length}
+						</button>
+					)
+				)}
+			</div>
+		</div>
+	)
 }
 
 /** Tracks that didn't download can be tried again with any other provider, now or later. */
@@ -319,8 +453,11 @@ function RetryWithProvider(props: {
 			<p className="min-w-0 flex-1 text-muted">
 				{props.count === 1 ? '1 tema no se descargó' : `${props.count} temas no se descargaron`} (no encontrados, dudosos,
 				con error u omitidos). Puedes intentarlo con otro proveedor:
-				{props.providers.includes('youtube') && (
-					<span className="ml-1 text-xs text-amber-300/80">YouTube no es calidad máxima (AAC ~128 kbps, con pérdida).</span>
+				{props.providers.some(isLossy) && (
+					<span className="ml-1 text-xs text-amber-300/80">
+						{props.providers.filter(isLossy).map((s) => SERVICE_LABEL[s]).join(' y ')}{' '}
+						{props.providers.filter(isLossy).length > 1 ? 'no son' : 'no es'} calidad máxima (con pérdida).
+					</span>
 				)}
 			</p>
 			<div className="flex flex-wrap gap-2">

@@ -26,6 +26,8 @@ export interface ServerOptions {
 	browserLogin?: {
 		qobuz(): Promise<string>
 		spotify: SpotifyWebLogin
+		/** Sign in on soundcloud.com; resolves with the session's `oauth_token` cookie. */
+		soundcloud(): Promise<string>
 	}
 }
 
@@ -80,6 +82,23 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 			})
 		}
 		await kemix.accounts.connectQobuz(await opts.browserLogin.qobuz())
+		void kemix.library.syncAll()
+		return { ok: true }
+	})
+	app.post('/api/accounts/soundcloud/browser', async () => {
+		if (!opts.browserLogin) {
+			throw Object.assign(new Error('El inicio de sesión en ventana solo está disponible en la app de escritorio'), {
+				statusCode: 404
+			})
+		}
+		await kemix.accounts.connectSoundCloud({ cookie: await opts.browserLogin.soundcloud() })
+		void kemix.library.syncAll()
+		return { ok: true }
+	})
+	app.post('/api/accounts/soundcloud', async (req) => {
+		const cookie = (req.body as { cookie?: unknown } | undefined)?.cookie
+		if (typeof cookie !== 'string') throw Object.assign(new Error('Faltan las cookies'), { statusCode: 400 })
+		await kemix.accounts.connectSoundCloud({ cookie })
 		void kemix.library.syncAll()
 		return { ok: true }
 	})
@@ -143,6 +162,27 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		return kemix.library.createPlaylist(service(req.params), body.name, trackIds as string[])
 	})
 
+	/** A new playlist on `:service` with tracks found on another one: each is looked up there by search. */
+	app.post('/api/playlists/copy/:service', async (req) => {
+		const body = req.body as { name?: unknown; tracks?: unknown } | undefined
+		const tracks = body?.tracks
+		const valid = (t: unknown): t is SourceTrack => {
+			const x = t as Partial<SourceTrack> | null
+			return !!x && typeof x.sourceId === 'string' && typeof x.title === 'string' && Array.isArray(x.artists)
+		}
+		if (typeof body?.name !== 'string' || !Array.isArray(tracks) || !tracks.every(valid)) {
+			throw Object.assign(new Error('Datos de playlist inválidos'), { statusCode: 400 })
+		}
+		const clean = tracks.map((t) => ({
+			sourceId: t.sourceId,
+			title: t.title,
+			artists: t.artists.filter((a): a is string => typeof a === 'string'),
+			album: typeof t.album === 'string' ? t.album : undefined,
+			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined,
+			isrc: typeof t.isrc === 'string' ? t.isrc : undefined
+		}))
+		return kemix.library.copyPlaylist(service(req.params), body.name, clean)
+	})
 	app.get('/api/playlists/:id', async (req) => kemix.library.getPlaylist(id(req.params)))
 	app.post('/api/playlists/:id/sync', async (req) => {
 		await kemix.library.syncPlaylistTracks(id(req.params), true)
@@ -162,6 +202,17 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		}
 		await kemix.queue.enqueuePlaylist(id(req.params), positions as number[] | undefined, provider ?? null, quality ?? null)
 		return { ok: true }
+	})
+	app.get('/api/playlists/:id/scan', async (req) => ({ scan: kemix.queue.scanState(id(req.params)) }))
+	app.post('/api/playlists/:id/scan', async (req) => {
+		const { positions, provider } = (req.body as { positions?: unknown; provider?: unknown } | undefined) ?? {}
+		if (positions !== undefined && (!Array.isArray(positions) || !positions.every((n) => Number.isInteger(n)))) {
+			throw Object.assign(new Error('positions inválidas'), { statusCode: 400 })
+		}
+		if (provider != null && !isDownloadService(provider)) {
+			throw Object.assign(new Error('Proveedor desconocido'), { statusCode: 400 })
+		}
+		return { scan: await kemix.queue.scanPlaylist(id(req.params), positions as number[] | undefined, provider ?? null) }
 	})
 	app.patch('/api/playlists/:id', async (req) => {
 		const body = req.body as { folderId: number | null }

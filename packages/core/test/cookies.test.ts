@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getCookie, normalizeCookieInput } from '../src/sources/cookies'
+import { getCookie, normalizeCookieInput, toNetscapeCookies } from '../src/sources/cookies'
 import { extractDeezerArl } from '../src/accounts'
 
 const D = 'music.youtube.com'
@@ -79,5 +79,14 @@ describe('extractDeezerArl', () => {
 
 	it('explains when the export has no arl', () => {
 		expect(() => extractDeezerArl(`.deezer.com\tTRUE\t/\tTRUE\t${future}\tsid\tfrxyz`)).toThrow(/arl/)
+	})
+})
+
+describe('toNetscapeCookies', () => {
+	it('writes a cookies.txt that reads back to the same header', () => {
+		const header = 'SAPISID=abc; __Secure-3PSID=x=y; LOGIN_INFO=AFm:QUQ'
+		const txt = toNetscapeCookies(header, 'youtube.com', 2000000000)
+		expect(txt.split('\n')[1]).toBe('.youtube.com\tTRUE\t/\tTRUE\t2000000000\tSAPISID\tabc')
+		expect(normalizeCookieInput(txt, 'music.youtube.com')).toBe(header)
 	})
 })

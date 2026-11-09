@@ -9,6 +9,7 @@ import type {
 	PlaylistSummary,
 	QualityLevel,
 	ReviewItem,
+	ScanState,
 	Settings,
 	SourceService,
 	SourceTrack,
@@ -42,6 +43,10 @@ export const api = {
 
 	connectQobuzInBrowser: () => request('POST', '/api/accounts/qobuz/browser'),
 	connectDeezer: (arl: string) => request('POST', '/api/accounts/deezer', { arl }),
+	/** Desktop app: sign in on soundcloud.com in a window. */
+	connectSoundCloudInBrowser: () => request('POST', '/api/accounts/soundcloud/browser'),
+	/** Cookies of soundcloud.com (or the bare oauth_token). */
+	connectSoundCloud: (cookie: string) => request('POST', '/api/accounts/soundcloud', { cookie }),
 	/** Without a cookie, reuses the stored one (to switch between the Google accounts it covers). */
 	connectYtMusic: (body: { cookie?: string; accountIndex?: number }) =>
 		request<{ status: 'connected' } | { status: 'choose'; accounts: YtMusicAccount[] }>('POST', '/api/accounts/ytmusic', body),
@@ -62,6 +67,10 @@ export const api = {
 	 */
 	downloadPlaylist: (id: number, positions?: number[], provider?: DownloadService | null, quality?: QualityLevel | null) =>
 		request('POST', `/api/playlists/${id}/download`, { positions, provider, quality }),
+	/** Look the tracks up (without downloading) to learn the best quality each has; runs in the background. */
+	scanPlaylist: (id: number, positions?: number[], provider?: DownloadService | null) =>
+		request<{ scan: ScanState }>('POST', `/api/playlists/${id}/scan`, { positions, provider }),
+	scanState: (id: number) => request<{ scan: ScanState | null }>('GET', `/api/playlists/${id}/scan`),
 	preview: (trackId: number) => request<{ preview: TrackPreview | null }>('GET', `/api/tracks/${trackId}/preview`),
 	/**
 	 * Audio for a track that isn't in the library (a search result from `service`): the service's full song, else
@@ -71,6 +80,12 @@ export const api = {
 		request<{ preview: TrackPreview | null }>('POST', `/api/preview/${service}${exact ? '?exact=1' : ''}`, track),
 	movePlaylist: (id: number, folderId: number | null) => request('PATCH', `/api/playlists/${id}`, { folderId }),
 	search: (service: SourceService, query: string) => request<SourceTrack[]>('POST', `/api/search/${service}`, { query }),
+	/** A new playlist on `service` with tracks from another one, each looked up there; the ones not found come back. */
+	copyPlaylist: (service: SourceService, name: string, tracks: SourceTrack[]) =>
+		request<{ playlistId: number | null; added: number; missing: SourceTrack[] }>('POST', `/api/playlists/copy/${service}`, {
+			name,
+			tracks
+		}),
 	createPlaylist: (service: SourceService, name: string, trackIds: string[]) =>
 		request<{ playlistId: number | null }>('POST', `/api/playlists/create/${service}`, { name, trackIds }),
 

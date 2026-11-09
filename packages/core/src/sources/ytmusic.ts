@@ -42,10 +42,15 @@ export interface YtMusicAccount {
 }
 
 const MAX_GOOGLE_ACCOUNTS = 10
+/** A search whose first song result is a long-standing official track, to see which formats the account is offered. */
+const PREMIUM_PROBE_QUERY = 'Daft Punk Get Lucky'
+/** AAC 256 kbps: YouTube only offers it to YouTube Music Premium accounts. */
+const PREMIUM_AUDIO_ITAG = 141
 
 export class YtMusicSource implements SourceConnector {
 	readonly service = 'ytmusic' as const
 	#yt?: Promise<Innertube>
+	#premium?: Promise<boolean>
 
 	constructor(
 		private cookie: string,
@@ -106,6 +111,26 @@ export class YtMusicSource implements SourceConnector {
 			)
 		}
 		return this.identity()
+	}
+
+	/**
+	 * Whether the chosen account has YouTube Music Premium, i.e. downloads can get AAC 256 kbps. Asked the way it
+	 * matters: does YouTube Music offer this account the Premium audio format for a song? Checked once per connection.
+	 */
+	hasPremium(): Promise<boolean> {
+		this.#premium ??= (async () => {
+			const yt = await this.#client()
+			const song = (await yt.music.search(PREMIUM_PROBE_QUERY, { type: 'song' })).songs?.contents?.[0]
+			if (!song?.id) throw new Error('YouTube Music no devolvió la canción de prueba')
+			const info = await yt.music.getInfo(song.id)
+			const formats = info.streaming_data?.adaptive_formats
+			if (!formats?.length) throw new Error('YouTube Music no devolvió los formatos de la canción de prueba')
+			return formats.some((f) => f.itag === PREMIUM_AUDIO_ITAG)
+		})().catch((err) => {
+			this.#premium = undefined
+			throw err
+		})
+		return this.#premium
 	}
 
 	/** First page of a YT Music browse endpoint, failing if Google answered as signed out. */

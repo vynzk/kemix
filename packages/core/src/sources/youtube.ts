@@ -1,19 +1,35 @@
-import { spawn } from 'node:child_process'
-import { PassThrough, Readable } from 'node:stream'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { Readable } from 'node:stream'
 import { Innertube, YTNodes } from 'youtubei.js'
 import type { AudioStream, Downloader } from '../download/lucida-adapter'
 import type { AudioQuality, SourceTrack, TargetTrack, YouTubePreview } from '../types'
 import { cleanArtist, searchQueries } from '../match/score'
-import { searchService, YOUTUBE_MIN_SCORE } from '../match/resolve'
+import { LOSSY_MIN_SCORE, searchService } from '../match/resolve'
 import { errorMessage } from '../util'
-import type { ManagedYtDlp } from './yt-dlp'
+import { toNetscapeCookies } from './cookies'
+import { lastLine, sniffAudio, type YtDlp } from './yt-dlp'
 
-/** What YouTube typically serves for audio (AAC ~128 kbps or Opus ~130 kbps): always lossy. */
+/**
+ * What YouTube typically serves for audio (AAC ~128 kbps or Opus ~130 kbps): always lossy. With the cookies of a
+ * YouTube Music Premium account downloads get AAC 256 kbps instead; the real bitrate is read from the file.
+ */
 export const YOUTUBE_QUALITY: AudioQuality = { codec: 'aac', lossless: false, bitrateKbps: 128 }
+/** What YouTube gives a YouTube Music Premium account (itag 141). */
+export const YOUTUBE_PREMIUM_QUALITY: AudioQuality = { codec: 'aac', lossless: false, bitrateKbps: 256 }
 
-const YT_DLP_HINT =
-	'Kemix baja yt-dlp por su cuenta la primera vez que lo necesita (hace falta conexión a internet). ' +
-	'Si no puede, instálalo aparte (https://github.com/yt-dlp/yt-dlp) e indica su ruta en Ajustes.'
+/**
+ * yt-dlp format selector: AAC 256 kbps (itag 141, only offered to YouTube Music Premium accounts), else the best m4a
+ * (AAC: plays everywhere and takes tags, no ffmpeg needed since nothing is re-encoded), else whatever is best.
+ */
+const YT_DLP_FORMAT = '141/bestaudio[ext=m4a]/bestaudio'
+
+/** A YouTube Music connection: its `Cookie` header and which signed-in Google account to act as (authuser). */
+export interface YtMusicLogin {
+	cookie: string
+	accountIndex: number
+}
 
 export function youtubeUrl(videoId: string) {
 	return `https://www.youtube.com/watch?v=${videoId}`
@@ -54,11 +70,13 @@ function videoIdFromUrl(url: string): string {
 export class YouTube {
 	#yt?: Promise<Innertube>
 	#previews = new Map<string, YouTubePreview | null>()
-	#ytDlp = new Map<string, Promise<boolean>>()
 
 	constructor(
-		private ytDlpPath: () => string,
-		private managedYtDlp?: ManagedYtDlp
+		private ytDlp: YtDlp,
+		/** The connected YouTube Music account (cookies and chosen account), if any: unlocks Premium audio (AAC 256). */
+		private ytMusicAccount: () => YtMusicLogin | null = () => null,
+		/** Whether that account has YouTube Music Premium (false without one). */
+		private ytMusicPremium: () => Promise<boolean> = async () => false
 	) {}
 
 	#client() {
@@ -96,7 +114,7 @@ export class YouTube {
 	 */
 	candidates(track: SourceTrack & { source?: string }, query?: string) {
 		const queries = query?.trim() ? [query.trim()] : searchQueries(track)
-		return searchService(track, this.downloader(), queries, YOUTUBE_MIN_SCORE)
+		return searchService(track, this.downloader(), queries, LOSSY_MIN_SCORE)
 	}
 
 	/** A video to listen to the track. Tracks imported from YouTube Music already are one. */
@@ -122,77 +140,71 @@ export class YouTube {
 		return preview
 	}
 
-	#hasYtDlp(bin: string): Promise<boolean> {
-		let p = this.#ytDlp.get(bin)
-		if (!p) {
-			p = new Promise<boolean>((resolve) => {
-				const child = spawn(bin, ['--version'], { windowsHide: true })
-				child.on('error', () => resolve(false))
-				child.on('close', (code) => resolve(code === 0))
-			})
-			// A missing yt-dlp may get installed while the app runs: only cache successes.
-			p.then((ok) => !ok && this.#ytDlp.delete(bin))
-			this.#ytDlp.set(bin, p)
-		}
-		return p
-	}
-
 	async open(videoId: string): Promise<AudioStream> {
-		const configured = this.ytDlpPath()
-		if (configured) {
-			if (await this.#hasYtDlp(configured)) return this.#openWithYtDlp(configured, videoId)
-			throw new Error(`No se pudo ejecutar yt-dlp en "${configured}". ${YT_DLP_HINT}`)
-		}
-		let managedError = ''
-		if (this.managedYtDlp) {
+		let bin: string
+		try {
+			bin = await this.ytDlp.bin()
+		} catch (err) {
+			// A yt-dlp set in Settings that doesn't run is an error to fix, not something to work around.
+			if (this.ytDlp.configured) throw err
 			try {
-				const bin = await this.managedYtDlp.path()
-				if (await this.#hasYtDlp(bin)) return this.#openWithYtDlp(bin, videoId)
-				managedError = `No se pudo ejecutar ${bin}. `
-			} catch (err) {
-				managedError = `${errorMessage(err)}. `
+				return await this.#openWithYoutubei(videoId)
+			} catch (direct) {
+				throw new Error(`YouTube bloqueó la descarga directa (${errorMessage(direct)}). ${errorMessage(err)}`)
 			}
 		}
-		if (await this.#hasYtDlp('yt-dlp')) return this.#openWithYtDlp('yt-dlp', videoId)
-		try {
-			return await this.#openWithYoutubei(videoId)
-		} catch (err) {
-			throw new Error(`YouTube bloqueó la descarga directa (${errorMessage(err)}). ${managedError}${YT_DLP_HINT}`)
-		}
+		return this.#openWithYtDlp(bin, videoId)
 	}
 
 	async #openWithYtDlp(bin: string, videoId: string): Promise<AudioStream> {
-		// Prefer m4a (AAC): plays everywhere and takes tags. No ffmpeg needed since nothing is re-encoded.
+		const login = this.ytMusicAccount()
+		if (login) {
+			try {
+				return await this.#runYtDlp(bin, videoId, login)
+			} catch {
+				// Expired cookies or an account YouTube is wary of: downloading anonymously still works (at 128 kbps).
+			}
+		}
+		return this.#runYtDlp(bin, videoId, null)
+	}
+
+	async #runYtDlp(bin: string, videoId: string, login: YtMusicLogin | null): Promise<AudioStream> {
+		const cookie = login?.cookie
+		// yt-dlp only takes cookies from a file. Keep it private and remove it once yt-dlp is done.
+		let cookieDir: string | null = null
+		const args: string[] = []
+		if (cookie) {
+			cookieDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kemix-yt-'))
+			const cookieFile = path.join(cookieDir, 'cookies.txt')
+			const expires = Date.now() / 1000 + 365 * 24 * 3600
+			await fs.promises.writeFile(cookieFile, toNetscapeCookies(cookie, 'youtube.com', expires), { mode: 0o600 })
+			args.push('--cookies', cookieFile)
+			// The cookies may hold several Google accounts and yt-dlp has no option to pick one: it acts as the first
+			// (authuser 0). Ask for the one chosen in Kemix the way Google's own pages do, with X-Goog-AuthUser.
+			if (login.accountIndex > 0) args.push('--add-headers', `X-Goog-AuthUser:${login.accountIndex}`)
+		}
+		const removeCookies = () => cookieDir && fs.rm(cookieDir, { recursive: true, force: true }, () => {})
 		// YouTube answers 403 unless yt-dlp can solve its JS challenges, which needs a JS runtime the user most likely
 		// doesn't have. Lend it our own executable: Electron behaves as plain Node with ELECTRON_RUN_AS_NODE (and under
 		// the standalone server execPath already is Node). Adds to Deno if installed, doesn't replace it.
-		const child = spawn(
+		// With cookies, ask through music.youtube.com: that's where yt-dlp offers the Premium formats.
+		return this.ytDlp.stream(
 			bin,
 			[
+				...args,
 				'--js-runtimes',
 				`node:${process.execPath}`,
 				'-f',
-				'bestaudio[ext=m4a]/bestaudio',
+				YT_DLP_FORMAT,
 				'--no-playlist',
 				'--no-progress',
 				'--quiet',
 				'-o',
 				'-',
-				youtubeUrl(videoId)
+				cookie ? `https://music.youtube.com/watch?v=${videoId}` : youtubeUrl(videoId)
 			],
-			{ windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+			{ onExit: removeCookies, describe: (stderr) => `yt-dlp falló: ${lastLine(stderr) || 'sin detalle'}` }
 		)
-		let stderr = ''
-		child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)))
-		// Only end the stream once yt-dlp exits cleanly, so a failure halfway never looks like a complete file.
-		const out = new PassThrough()
-		child.stdout.pipe(out, { end: false })
-		child.on('error', (err) => out.destroy(err))
-		child.on('close', (code) => {
-			if (code === 0) out.end()
-			else out.destroy(new Error(`yt-dlp falló: ${stderr.trim().split('\n').pop() || `código ${code}`}`))
-		})
-		return sniff(out, () => child.kill())
 	}
 
 	async #openWithYoutubei(videoId: string): Promise<AudioStream> {
@@ -201,7 +213,7 @@ export class YouTube {
 		for (const client of ['IOS', 'MWEB', 'YTMUSIC'] as const) {
 			try {
 				const web = await yt.download(videoId, { type: 'audio', quality: 'best', format: 'any', client })
-				return await sniff(Readable.fromWeb(web as Parameters<typeof Readable.fromWeb>[0]))
+				return await sniffAudio(Readable.fromWeb(web as Parameters<typeof Readable.fromWeb>[0]))
 			} catch (err) {
 				lastError = err
 			}
@@ -216,7 +228,9 @@ export class YouTube {
 			search: (query, limit) => this.search(query, limit),
 			exact: sourceVideo,
 			accountInfo: async () => ({}),
-			accountQuality: async () => YOUTUBE_QUALITY,
+			// Unknown Premium status counts as none: better to promise 128 and deliver 256 than the other way round.
+			accountQuality: async () =>
+				(await this.ytMusicPremium().catch(() => false)) ? YOUTUBE_PREMIUM_QUALITY : YOUTUBE_QUALITY,
 			getTrack: async (url) => {
 				const videoId = videoIdFromUrl(url)
 				return {
@@ -226,41 +240,4 @@ export class YouTube {
 			}
 		}
 	}
-}
-
-/** Wait for the first bytes (so failures surface before a file is created) and tell the container from them. */
-async function sniff(stream: Readable, abort?: () => void): Promise<AudioStream> {
-	// read() in paused mode, so nothing flows (and gets lost) before the caller attaches its pipeline.
-	const first = await new Promise<Buffer>((resolve, reject) => {
-		const cleanup = () => {
-			stream.off('readable', onReadable)
-			stream.off('error', onError)
-			stream.off('end', onEnd)
-		}
-		const onReadable = () => {
-			const chunk = stream.read() as Buffer | null
-			if (!chunk) return
-			cleanup()
-			resolve(chunk)
-		}
-		const onError = (err: Error) => {
-			cleanup()
-			reject(err)
-		}
-		const onEnd = () => onError(new Error('YouTube no devolvió audio'))
-		stream.on('readable', onReadable)
-		stream.once('error', onError)
-		stream.once('end', onEnd)
-	}).catch((err) => {
-		abort?.()
-		throw err
-	})
-	stream.unshift(first)
-	const mimeType =
-		first.subarray(4, 8).toString('latin1') === 'ftyp'
-			? 'audio/mp4'
-			: first.readUInt32BE(0) === 0x1a45dfa3
-				? 'audio/webm'
-				: 'application/octet-stream'
-	return { stream, mimeType }
 }

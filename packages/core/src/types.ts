@@ -1,15 +1,27 @@
 // Shared domain + API types. The UI imports these as type-only, so keep this file free of runtime deps.
 
-export type SourceService = 'spotify' | 'ytmusic' | 'qobuz' | 'deezer'
+export type SourceService = 'spotify' | 'ytmusic' | 'qobuz' | 'deezer' | 'soundcloud'
 /** Lossless download services, tried in the user's priority order. */
 export type TargetService = 'qobuz' | 'deezer'
-/** Everything a track can be downloaded from. YouTube is lossy and only used when the user asks for it. */
-export type DownloadService = TargetService | 'youtube'
+/** Lossy download services: need no account (they go through yt-dlp) and are only used when the user asks for them. */
+export type LossyService = 'youtube' | 'soundcloud'
+/** Everything a track can be downloaded from. */
+export type DownloadService = TargetService | LossyService
 
-export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer']
+export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer', 'soundcloud']
 export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer']
-export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'youtube']
-export const DOWNLOAD_SERVICE_LABEL: Record<DownloadService, string> = { qobuz: 'Qobuz', deezer: 'Deezer', youtube: 'YouTube' }
+export const LOSSY_SERVICES: LossyService[] = ['youtube', 'soundcloud']
+export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'youtube', 'soundcloud']
+export const DOWNLOAD_SERVICE_LABEL: Record<DownloadService, string> = {
+	qobuz: 'Qobuz',
+	deezer: 'Deezer',
+	youtube: 'YouTube',
+	soundcloud: 'SoundCloud'
+}
+
+export function isLossyService(s: string): s is LossyService {
+	return (LOSSY_SERVICES as string[]).includes(s)
+}
 
 export function isDownloadService(s: unknown): s is DownloadService {
 	return typeof s === 'string' && (DOWNLOAD_SERVICES as string[]).includes(s)
@@ -42,11 +54,13 @@ export interface SourceTrack {
 
 /**
  * Quality to download in: the best the service has, or a ceiling. Each service gives the best it has up to it.
- * Qobuz has nothing below MP3 320, Deezer has a single lossless format (16-bit/44.1 kHz), and YouTube always gives
- * its one audio format.
+ * Qobuz has nothing below MP3 320, Deezer has a single lossless format (16-bit/44.1 kHz), and YouTube and SoundCloud
+ * always give their one audio format.
+ * `mp3_compat` is always an MP3, from any service: Qobuz/Deezer send their MP3 and anything else (YouTube's AAC/Opus,
+ * a FLAC) is converted with ffmpeg, so the file plays on any player.
  */
-export type QualityLevel = 'max' | 'hires96' | 'cd' | 'mp3_320' | 'mp3_128'
-export const QUALITY_LEVELS: QualityLevel[] = ['max', 'hires96', 'cd', 'mp3_320', 'mp3_128']
+export type QualityLevel = 'max' | 'hires96' | 'cd' | 'mp3_320' | 'mp3_128' | 'mp3_compat'
+export const QUALITY_LEVELS: QualityLevel[] = ['max', 'hires96', 'cd', 'mp3_320', 'mp3_128', 'mp3_compat']
 
 export function isQualityLevel(s: unknown): s is QualityLevel {
 	return typeof s === 'string' && (QUALITY_LEVELS as string[]).includes(s)
@@ -57,14 +71,16 @@ export function isQualityLevel(s: unknown): s is QualityLevel {
  * reused for the others.
  */
 export function serviceQualityLevel(service: DownloadService, level: QualityLevel): QualityLevel {
-	if (service === 'youtube') return 'max'
+	// Qobuz/Deezer's own MP3 is already compatible; YouTube/SoundCloud's audio gets converted, so it's another file.
+	if (level === 'mp3_compat') return isLossyService(service) ? 'mp3_compat' : serviceQualityLevel(service, 'mp3_320')
+	if (isLossyService(service)) return 'max'
 	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
 	return level === 'mp3_128' ? 'mp3_320' : level
 }
 
 /** Audio quality of a stream or file. */
 export interface AudioQuality {
-	codec: 'flac' | 'alac' | 'mp3' | 'aac' | 'opus' | 'vorbis' | 'other'
+	codec: 'flac' | 'alac' | 'wav' | 'aiff' | 'mp3' | 'aac' | 'opus' | 'vorbis' | 'other'
 	lossless: boolean
 	bitDepth?: number
 	sampleRateHz?: number
@@ -124,14 +140,14 @@ export interface AccountIdentity {
 
 export interface Settings {
 	downloadDir: string
-	/** Services tried, in order, when a download has no provider chosen. YouTube (lossy) only if the user adds it. */
+	/** Services tried, in order, when a download has no provider chosen. YouTube/SoundCloud (lossy) only if the user adds them. */
 	servicePriority: DownloadService[]
 	/** Default quality for downloads; each download can pick another. */
 	downloadQuality: QualityLevel
 	concurrency: number
 	autoAcceptThreshold: number
 	spotifyClientId: string
-	/** Path to yt-dlp, used for YouTube downloads. Empty: Kemix's own copy (downloaded on first use), else the PATH. */
+	/** Path to yt-dlp, used for YouTube and SoundCloud. Empty: Kemix's own copy (downloaded on first use), else the PATH. */
 	ytDlpPath: string
 	/** Port the local server listens on (used for the Spotify OAuth redirect). */
 	port: number
@@ -199,7 +215,7 @@ export interface ReviewItem {
 	source: SourceService
 	playlists: string[]
 	candidates: MatchCandidate[]
-	/** Not found on any lossless service: YouTube is the remaining option. */
+	/** Not found on any lossless service: YouTube/SoundCloud are the remaining options. */
 	notFound: boolean
 }
 
@@ -215,9 +231,10 @@ export interface StreamPreview {
 	full: boolean
 }
 
-/** What the player can play for a track: a YouTube video, or the service's own audio. */
+/** What the player can play for a track: a YouTube video, a SoundCloud track (its embedded player), or the service's own audio. */
 export type TrackPreview =
 	| ({ kind: 'youtube' } & YouTubePreview)
+	| { kind: 'soundcloud'; url: string; title: string }
 	| ({ kind: 'stream'; service: SourceService; title: string } & StreamPreview)
 
 export interface DownloadRow {
@@ -236,7 +253,24 @@ export interface DownloadRow {
 	service: DownloadService | null
 }
 
+/**
+ * Quality scan of a playlist: its tracks are looked up on the download services (as a download would) to learn the
+ * best quality each one has, without downloading anything.
+ */
+export interface ScanState {
+	playlistId: number
+	running: boolean
+	/** Tracks looked up so far, out of `total`. */
+	done: number
+	total: number
+	/** Tracks whose lookup failed (service down, session expired…). */
+	failed: number
+	/** First failure, to tell the user why. */
+	error: string | null
+}
+
 export type KemixEvent =
+	| { type: 'scan'; scan: ScanState }
 	| { type: 'accounts' }
 	| { type: 'library' }
 	| { type: 'sync'; state: 'start' | 'progress' | 'done' | 'error'; message?: string }

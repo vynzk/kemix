@@ -34,6 +34,9 @@ export function useLiveEvents(): SyncState {
 				case 'review':
 					qc.invalidateQueries({ queryKey: ['review'] })
 					break
+				case 'scan':
+					qc.setQueryData(['scan', event.scan.playlistId], { scan: event.scan })
+					break
 				case 'download':
 					upsertDownload(qc, event.row)
 					invalidatePlaylist(event.row.playlistId)

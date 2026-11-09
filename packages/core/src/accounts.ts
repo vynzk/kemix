@@ -3,7 +3,7 @@ import type { EventBus } from './events'
 import type { SecretStore } from './secrets'
 import type { SettingsStore } from './settings'
 import type { AccountInfo, AccountStatus, AudioQuality, DownloadService, SourceService, SourceTrack, TargetService } from './types'
-import { SOURCE_SERVICES } from './types'
+import { DOWNLOAD_SERVICES, isLossyService, SOURCE_SERVICES } from './types'
 import type { SourceConnector } from './sources/types'
 import { QobuzApi, QobuzSource, scrapeQobuzAppCredentials, type QobuzCredentials } from './sources/qobuz'
 import { parseQobuzSession } from './sources/qobuz-session'
@@ -18,7 +18,9 @@ import { SpotifyWebSource, type SpotifyWebSession } from './sources/spotify-web'
 import { YtMusicSource, type YtMusicAccount } from './sources/ytmusic'
 import { getCookie, normalizeCookieInput } from './sources/cookies'
 import { YouTube } from './sources/youtube'
-import { ManagedYtDlp } from './sources/yt-dlp'
+import { SoundCloud } from './sources/soundcloud'
+import { extractSoundCloudToken, SoundCloudSource } from './sources/soundcloud-api'
+import { ManagedYtDlp, YtDlp } from './sources/yt-dlp'
 import { createDeezerDownloader, createQobuzDownloader, type Downloader } from './download/lucida-adapter'
 import { errorMessage, now } from './util'
 
@@ -34,6 +36,11 @@ export interface SpotifyWebLogin {
 	token(interactive: boolean): Promise<SpotifyWebSession>
 	/** Forget the saved open.spotify.com session. */
 	logout(): Promise<void>
+}
+
+interface SoundCloudSecret {
+	/** The `oauth_token` cookie of a signed-in soundcloud.com session. */
+	token: string
 }
 
 interface YtMusicSecret {
@@ -85,6 +92,8 @@ export class Accounts {
 	#pendingSpotify = new Map<string, { verifier: string; clientId: string; redirectUri: string }>()
 	/** Plain YouTube: preview player and lossy fallback downloads. Needs no account. */
 	readonly youtube: YouTube
+	/** SoundCloud downloads: work without an account, and go through it when one is connected. */
+	readonly soundcloud: SoundCloud
 
 	constructor(
 		private db: Db,
@@ -94,7 +103,22 @@ export class Accounts {
 		/** Where Kemix keeps the tools it downloads for itself (its own yt-dlp). */
 		binDir: string
 	) {
-		this.youtube = new YouTube(() => this.settings.get().ytDlpPath, new ManagedYtDlp(binDir))
+		const ytDlp = new YtDlp(() => this.settings.get().ytDlpPath, new ManagedYtDlp(binDir))
+		this.soundcloud = new SoundCloud(ytDlp, () =>
+			this.isConnected('soundcloud') ? (this.secrets.get<SoundCloudSecret>('soundcloud')?.token ?? null) : null
+		)
+		this.youtube = new YouTube(
+			ytDlp,
+			() => {
+				const c = this.secrets.get<YtMusicSecret>('ytmusic')
+				return c ? { cookie: c.cookie, accountIndex: c.accountIndex ?? 0 } : null
+			},
+			async () => {
+				if (!this.isConnected('ytmusic')) return false
+				const src = this.source('ytmusic')
+				return src instanceof YtMusicSource && src.hasPremium()
+			}
+		)
 	}
 
 	list(): AccountInfo[] {
@@ -277,6 +301,26 @@ export class Accounts {
 		}
 	}
 
+	// ---- SoundCloud ----
+
+	/**
+	 * Connect with a soundcloud.com session: the `oauth_token` cookie, captured by the desktop app's login window or
+	 * pulled out of a cookie export.
+	 */
+	async connectSoundCloud(input: { cookie: string }) {
+		try {
+			const token = extractSoundCloudToken(input.cookie)
+			const src = new SoundCloudSource(token)
+			const id = await step('Iniciar sesión en SoundCloud', () => src.identity())
+			this.secrets.set('soundcloud', { token } satisfies SoundCloudSecret)
+			this.#sources.set('soundcloud', src)
+			this.#setStatus('soundcloud', 'connected', { name: id.name, email: id.email })
+		} catch (err) {
+			this.#setStatus('soundcloud', 'error', { error: errorMessage(err) })
+			throw err
+		}
+	}
+
 	// ---- YouTube Music ----
 
 	/**
@@ -429,6 +473,11 @@ export class Accounts {
 				if (c) src = new YtMusicSource(c.cookie, c.accountIndex ?? 0)
 				break
 			}
+			case 'soundcloud': {
+				const c = this.secrets.get<SoundCloudSecret>('soundcloud')
+				if (c) src = new SoundCloudSource(c.token)
+				break
+			}
 		}
 		if (!src) throw new Error(`La cuenta de ${service} no está conectada`)
 		this.#sources.set(service, src)
@@ -437,13 +486,13 @@ export class Accounts {
 
 	/**
 	 * Best quality each download service gives with the connected account. Missing = not connected or the account
-	 * couldn't be read. YouTube needs no account (it's the on-request lossy fallback).
+	 * couldn't be read. YouTube and SoundCloud need no account (they're the on-request lossy fallbacks).
 	 */
 	async downloadQualities(): Promise<Partial<Record<DownloadService, AudioQuality>>> {
 		const out: Partial<Record<DownloadService, AudioQuality>> = {}
 		await Promise.all(
-			(['qobuz', 'deezer', 'youtube'] as const).map(async (service) => {
-				if (service !== 'youtube' && !this.isConnected(service)) return
+			DOWNLOAD_SERVICES.map(async (service) => {
+				if (!isLossyService(service) && !this.isConnected(service)) return
 				try {
 					out[service] = await (await this.downloader(service)).accountQuality()
 				} catch {
@@ -461,6 +510,7 @@ export class Accounts {
 
 	downloader(service: DownloadService): Promise<Downloader> {
 		if (service === 'youtube') return Promise.resolve(this.youtube.downloader())
+		if (service === 'soundcloud') return Promise.resolve(this.soundcloud.downloader())
 		let d = this.#downloaders.get(service)
 		if (!d) {
 			d = this.#createDownloader(service)
@@ -485,8 +535,8 @@ export class Accounts {
 	async downloaders(): Promise<Downloader[]> {
 		const out: Downloader[] = []
 		for (const service of this.settings.get().servicePriority) {
-			if (service === 'youtube') {
-				out.push(this.youtube.downloader())
+			if (isLossyService(service)) {
+				out.push(await this.downloader(service))
 				continue
 			}
 			if (!this.isConnected(service)) continue
