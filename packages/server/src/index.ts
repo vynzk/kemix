@@ -1,8 +1,16 @@
 import fs from 'node:fs'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
-import type { Kemix, MatchCandidate, Settings, SourceService, SourceTrack, SpotifyWebLogin } from '@kemix/core'
-import { SOURCE_SERVICES, isDownloadService } from '@kemix/core'
+import type {
+	DownloadService,
+	Kemix,
+	MatchCandidate,
+	Settings,
+	SourceService,
+	SourceTrack,
+	SpotifyWebLogin
+} from '@kemix/core'
+import { SOURCE_SERVICES, isDownloadService, isQualityLevel } from '@kemix/core'
 
 export interface ServerOptions {
 	kemix: Kemix
@@ -141,14 +149,18 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		return { ok: true }
 	})
 	app.post('/api/playlists/:id/download', async (req) => {
-		const { positions, provider } = (req.body as { positions?: unknown; provider?: unknown } | undefined) ?? {}
+		const { positions, provider, quality } =
+			(req.body as { positions?: unknown; provider?: unknown; quality?: unknown } | undefined) ?? {}
 		if (positions !== undefined && (!Array.isArray(positions) || !positions.every((n) => Number.isInteger(n)))) {
 			throw Object.assign(new Error('positions inválidas'), { statusCode: 400 })
 		}
 		if (provider != null && !isDownloadService(provider)) {
 			throw Object.assign(new Error('Proveedor desconocido'), { statusCode: 400 })
 		}
-		await kemix.queue.enqueuePlaylist(id(req.params), positions as number[] | undefined, provider ?? null)
+		if (quality != null && !isQualityLevel(quality)) {
+			throw Object.assign(new Error('Calidad desconocida'), { statusCode: 400 })
+		}
+		await kemix.queue.enqueuePlaylist(id(req.params), positions as number[] | undefined, provider ?? null, quality ?? null)
 		return { ok: true }
 	})
 	app.patch('/api/playlists/:id', async (req) => {
@@ -172,21 +184,30 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 
 	// ---------- review ----------
 
+	/** Optional provider picked by hand; missing or null = automatic. */
+	const provider = (v: unknown): DownloadService | null => {
+		if (v == null) return null
+		if (!isDownloadService(v)) throw Object.assign(new Error('Proveedor desconocido'), { statusCode: 400 })
+		return v
+	}
+
 	app.get('/api/review', async () => kemix.library.listReview())
-	app.post('/api/review/:id/search', async (req) =>
-		kemix.queue.searchCandidates(id(req.params), (req.body as { query?: string } | undefined)?.query)
-	)
+	app.post('/api/review/:id/search', async (req) => {
+		const body = req.body as { query?: unknown; provider?: unknown } | undefined
+		const query = typeof body?.query === 'string' ? body.query : undefined
+		return kemix.queue.searchCandidates(id(req.params), query, provider(body?.provider))
+	})
 	app.post('/api/review/:id/accept', async (req) => {
-		kemix.queue.acceptCandidate(id(req.params), (req.body as { candidate: MatchCandidate }).candidate)
+		const body = req.body as { candidate: MatchCandidate; provider?: unknown }
+		const from = provider(body.provider)
+		if (from) await kemix.queue.acceptCandidateFrom(id(req.params), body.candidate, from)
+		else kemix.queue.acceptCandidate(id(req.params), body.candidate)
 		return { ok: true }
 	})
 	app.post('/api/review/:id/skip', async (req) => {
 		kemix.queue.skipTrack(id(req.params))
 		return { ok: true }
 	})
-	app.post('/api/review/:id/youtube', async (req) =>
-		kemix.queue.youtubeCandidates(id(req.params), (req.body as { query?: string } | undefined)?.query)
-	)
 	app.post('/api/review/youtube', async (req) => {
 		const ids = (req.body as { trackIds?: unknown } | undefined)?.trackIds
 		if (!Array.isArray(ids) || !ids.every((n) => Number.isInteger(n))) {
@@ -209,7 +230,8 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 			artists: t.artists.filter((a): a is string => typeof a === 'string'),
 			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined
 		}
-		return { preview: await kemix.queue.previewTrack(service(req.params), track) }
+		const exact = (req.query as { exact?: string }).exact === '1'
+		return { preview: await kemix.queue.previewTrack(service(req.params), track, exact) }
 	})
 
 	// ---------- downloads ----------
@@ -221,6 +243,10 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 	})
 	app.post('/api/downloads/clear', async () => {
 		kemix.queue.clearFinished()
+		return { ok: true }
+	})
+	app.delete('/api/downloads/:id', async (req) => {
+		await kemix.queue.remove(id(req.params))
 		return { ok: true }
 	})
 

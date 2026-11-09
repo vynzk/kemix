@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
-import { bytes, cx, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Empty, ErrorText, PageHeader, StatusPill } from '../components/ui'
+import { SERVICE_LABEL, bytes, cx, qualityLabel, qualityTone } from '../lib/format'
+import { Button, Empty, ErrorText, PageHeader, RemoveDownloadButton, StatusPill } from '../components/ui'
+
+const ACTIVE = ['queued', 'matching', 'downloading']
 
 export function DownloadsPage() {
 	const qc = useQueryClient()
@@ -12,9 +14,10 @@ export function DownloadsPage() {
 	}
 	const retry = useMutation({ mutationFn: api.retryFailed, onSettled: refresh })
 	const clear = useMutation({ mutationFn: api.clearFinished, onSettled: refresh })
+	const remove = useMutation({ mutationFn: api.removeDownload, onSettled: refresh })
 	const rows = downloads.data ?? []
 	const errors = rows.filter((r) => r.status === 'error').length
-	const active = rows.filter((r) => ['queued', 'matching', 'downloading'].includes(r.status)).length
+	const active = rows.filter((r) => ACTIVE.includes(r.status)).length
 
 	return (
 		<div>
@@ -25,7 +28,7 @@ export function DownloadsPage() {
 						<Button onClick={() => retry.mutate()} disabled={!errors}>
 							Reintentar fallidas{errors ? ` (${errors})` : ''}
 						</Button>
-						<Button variant="ghost" onClick={() => clear.mutate()}>
+						<Button variant="ghost" onClick={() => clear.mutate()} title="Las quita de la lista; los archivos se quedan en el disco">
 							Limpiar terminadas
 						</Button>
 					</>
@@ -33,7 +36,7 @@ export function DownloadsPage() {
 			>
 				{active ? `${active} en curso o en cola` : 'Nada en curso'}
 			</PageHeader>
-			<ErrorText error={downloads.error ?? retry.error ?? clear.error} />
+			<ErrorText error={downloads.error ?? retry.error ?? clear.error ?? remove.error} />
 			{!downloads.isLoading && rows.length === 0 ? (
 				<Empty title="Sin descargas">Abre una playlist en la Biblioteca y pulsa Descargar.</Empty>
 			) : (
@@ -63,16 +66,28 @@ export function DownloadsPage() {
 											</div>
 										)}
 									</td>
-									<td className="w-44 py-2.5 pr-4 text-right whitespace-nowrap">
-										{r.status === 'done' && r.quality && (
+									<td className="w-52 py-2.5 pr-4 text-right whitespace-nowrap">
+										{r.status === 'done' && (r.quality || r.service) && (
 											<span className={cx('text-xs', qualityTone(r.quality))}>
 												{qualityLabel(r.quality)}
-												{r.service === 'youtube' && <span className="text-zinc-500"> · YouTube</span>}
+												{r.service && (
+													<span className="text-zinc-500">
+														{r.quality ? ' · ' : ''}
+														{SERVICE_LABEL[r.service]}
+													</span>
+												)}
 											</span>
 										)}
 									</td>
-									<td className="w-28 py-2.5 pr-8 text-right">
+									<td className="w-24 py-2.5 pr-4 text-right">
 										<StatusPill status={r.status} />
+									</td>
+									<td className="w-32 py-2.5 pr-8 text-right">
+										<RemoveDownloadButton
+											status={r.status}
+											pending={remove.isPending && remove.variables === r.id}
+											onRemove={() => remove.mutate(r.id)}
+										/>
 									</td>
 								</tr>
 							)

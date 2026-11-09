@@ -39,6 +39,11 @@ export function useLiveEvents(): SyncState {
 					invalidatePlaylist(event.row.playlistId)
 					invalidateLibrary()
 					break
+				case 'download-removed':
+					qc.setQueryData<DownloadRow[]>(['downloads'], (rows) => rows?.filter((r) => r.id !== event.id))
+					invalidatePlaylist(event.playlistId)
+					invalidateLibrary()
+					break
 				case 'sync':
 					if (event.state === 'start') setSync({ running: true })
 					else if (event.state === 'progress') setSync({ running: true, message: event.message })

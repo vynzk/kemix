@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, Settings } from '@kemix/core'
 import { api } from '../lib/api'
-import { SERVICE_LABEL } from '../lib/format'
+import { QUALITY_LEVEL_OPTIONS, SERVICE_LABEL } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 /** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
@@ -50,7 +50,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. Qobuz descarga siempre la máxima calidad disponible. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas; necesita yt-dlp."
+					hint="En modo automático se busca primero en el de arriba. YouTube (YT Music) es con pérdida (AAC ~128 kbps) y solo se usa si lo activas; necesita yt-dlp."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
@@ -88,6 +88,22 @@ export function SettingsPage() {
 							</li>
 						))}
 					</ol>
+				</Field>
+				<Field
+					label="Calidad de descarga"
+					hint={`${QUALITY_LEVEL_OPTIONS.find((o) => o.value === draft.downloadQuality)?.hint ?? ''} Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. Cada playlist puede elegir otra al descargar. YouTube siempre es AAC ~128 kbps.`}
+				>
+					<select
+						value={draft.downloadQuality}
+						onChange={(e) => set('downloadQuality', e.target.value as Settings['downloadQuality'])}
+						className="w-full rounded-md border border-line bg-ink px-3 py-2 text-sm"
+					>
+						{QUALITY_LEVEL_OPTIONS.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</select>
 				</Field>
 				<Field label="Descargas simultáneas">
 					<Input

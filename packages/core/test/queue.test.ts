@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Kemix, passphraseCipher, type SourceService, type SourceTrack, type TargetTrack } from '../src/index'
+import { Kemix, passphraseCipher, type QualityLevel, type SourceService, type SourceTrack, type TargetTrack } from '../src/index'
 import type { Downloader } from '../src/download/lucida-adapter'
 import type { SourceConnector } from '../src/sources/types'
 
@@ -20,6 +20,17 @@ async function settle(k: Kemix, timeout = 5000) {
 	throw new Error('queue did not settle')
 }
 
+/** Poll until `check` gives something truthy, and return it. */
+async function waitFor<T>(check: () => T | undefined | null | false | 0, timeout = 5000): Promise<T> {
+	const start = Date.now()
+	while (Date.now() - start < timeout) {
+		const value = check()
+		if (value) return value
+		await new Promise((r) => setTimeout(r, 20))
+	}
+	throw new Error('condition not met in time')
+}
+
 const catalog: TargetTrack[] = [
 	{ service: 'qobuz', id: 'q1', url: 'https://play.qobuz.com/track/q1', title: 'One', artists: ['Alpha'], durationMs: 200_000, isrc: 'ISRC1' },
 	{ service: 'qobuz', id: 'q2', url: 'https://play.qobuz.com/track/q2', title: 'Two', artists: ['Beta'], durationMs: 180_000 },
@@ -29,6 +40,8 @@ const catalog: TargetTrack[] = [
 class FakeDownloader implements Downloader {
 	readonly service = 'qobuz' as const
 	downloads = 0
+	/** Quality level each download asked for, in order. */
+	levels: QualityLevel[] = []
 	async isrcLookup(isrc: string) {
 		return catalog.find((t) => t.isrc === isrc) ?? null
 	}
@@ -40,8 +53,9 @@ class FakeDownloader implements Downloader {
 		const meta = catalog.find((t) => t.url === url)!
 		return {
 			meta,
-			open: async () => {
+			open: async (level: QualityLevel) => {
 				this.downloads++
+				this.levels.push(level)
 				return { stream: Readable.from([Buffer.from('fake-audio-'), Buffer.from(meta.id)]), mimeType: 'audio/mpeg', sizeBytes: 13 }
 			}
 		}
@@ -105,7 +119,9 @@ beforeEach(() => {
 		isConnected: (s: SourceService) => s === 'spotify' || s === 'qobuz',
 		source: () => source,
 		downloader: async () => downloader,
-		downloaders: async () => [downloader]
+		downloaders: async () => [downloader],
+		// No network in tests: the ISRC fallback finds nothing.
+		findIsrc: async () => null
 	})
 	kemix.start()
 })
@@ -196,6 +212,85 @@ describe('library + download queue', () => {
 		await expect(kemix.queue.enqueuePlaylist(playlist!.id, [2], 'deezer')).rejects.toThrow(/Deezer no está conectado/)
 	})
 
+	it('searches review options on the picked provider and downloads a pick from another one', async () => {
+		const deezerThree: TargetTrack = {
+			service: 'deezer',
+			id: 'd3',
+			url: 'https://www.deezer.com/track/d3',
+			title: 'Three (Live)',
+			artists: ['Gamma'],
+			durationMs: 300_000,
+			isrc: 'ISRC3'
+		}
+		const deezer: Downloader = {
+			service: 'deezer',
+			isrcLookup: async () => null,
+			search: async (q) => (q.toLowerCase().includes('gamma') ? [deezerThree] : []),
+			getTrack: async () => {
+				throw new Error('should be downloaded from Qobuz')
+			},
+			accountInfo: async () => ({}),
+			accountQuality: async () => ({ codec: 'flac' as const, lossless: true })
+		}
+		// Qobuz has the live version under the same ISRC.
+		const lookup = downloader.isrcLookup.bind(downloader)
+		downloader.isrcLookup = async (isrc) => (isrc === 'ISRC3' ? catalog[2]! : lookup(isrc))
+		Object.assign(kemix.accounts, {
+			isConnected: (s: SourceService) => s === 'spotify' || s === 'qobuz' || s === 'deezer',
+			downloader: async (s: string) => (s === 'deezer' ? deezer : downloader)
+		})
+
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id)
+		await settle(kemix)
+		const three = kemix.library.listReview().find((r) => r.title === 'Three')!
+
+		// Only the picked provider is searched.
+		const found = await kemix.queue.searchCandidates(three.trackId, undefined, 'deezer')
+		expect(found.map((c) => `${c.service}:${c.id}`)).toEqual(['deezer:d3'])
+
+		// Picked on Deezer, downloaded from Qobuz: that same recording, found there by its ISRC.
+		await kemix.queue.acceptCandidateFrom(three.trackId, found[0]!, 'qobuz')
+		await settle(kemix)
+		const after = await kemix.library.getPlaylist(playlist!.id)
+		expect(after.tracks[2]!.match?.targetService).toBe('qobuz')
+		expect(after.tracks[2]!.download).toMatchObject({ status: 'done', service: 'qobuz' })
+
+		// Nothing close enough on the other service: refused, and the track stays in review.
+		const four = kemix.library.listReview().find((r) => r.title === 'Four')!
+		const decoy = { ...deezerThree, id: 'd9', title: 'Something Else', artists: ['Nobody'], isrc: undefined, score: 0.4 }
+		await expect(kemix.queue.acceptCandidateFrom(four.trackId, decoy, 'qobuz')).rejects.toThrow(
+			/No encontré ese mismo tema en Qobuz/
+		)
+		expect(kemix.library.listReview().map((r) => r.title)).toEqual(['Four'])
+
+		// A provider that isn't connected is refused up front.
+		Object.assign(kemix.accounts, { isConnected: (s: SourceService) => s === 'spotify' || s === 'qobuz' })
+		await expect(kemix.queue.searchCandidates(four.trackId, undefined, 'deezer')).rejects.toThrow(/Deezer no está conectado/)
+	})
+
+	it("offers a YouTube Music track's own video in review and for YouTube downloads", async () => {
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id)
+		await settle(kemix)
+		// "Four" (not on Qobuz) came from YouTube Music: its source ID is the video.
+		kemix.db.prepare(`UPDATE tracks SET source = 'ytmusic', source_id = 'trpsQAD6ZdA' WHERE title = 'Four'`).run()
+		// No network: YouTube's search finds nothing.
+		Object.assign(kemix.accounts.youtube, { search: async () => [] })
+
+		const four = kemix.library.listReview().find((r) => r.title === 'Four')!
+		expect(four.notFound).toBe(true)
+		expect(four.candidates[0]).toMatchObject({ service: 'youtube', id: 'trpsQAD6ZdA', title: 'Four', score: 1 })
+		// What "Bajar desde YouTube" picks from.
+		const videos = await kemix.queue.youtubeCandidates(four.trackId)
+		expect(videos[0]).toMatchObject({ id: 'trpsQAD6ZdA', url: 'https://www.youtube.com/watch?v=trpsQAD6ZdA', score: 1 })
+		// Tracks from elsewhere get no such video.
+		const three = kemix.library.listReview().find((r) => r.title === 'Three')!
+		expect(three.candidates.some((c) => c.service === 'youtube')).toBe(false)
+	})
+
 	it('reuses already-downloaded files instead of downloading again', async () => {
 		await kemix.library.syncAll()
 		const [playlist] = kemix.library.listPlaylists()
@@ -217,6 +312,46 @@ describe('library + download queue', () => {
 		expect(downloader.downloads).toBe(3)
 	})
 
+	it('downloads in the quality from settings, or the one picked for the download', async () => {
+		kemix.settings.update({ downloadQuality: 'cd' })
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0])
+		await settle(kemix)
+		expect(downloader.levels).toEqual(['cd'])
+
+		await kemix.queue.enqueuePlaylist(playlist!.id, [1], null, 'mp3_320')
+		await settle(kemix)
+		expect(downloader.levels).toEqual(['cd', 'mp3_320'])
+	})
+
+	it('only reuses a file downloaded in the same quality', async () => {
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0], null, 'max')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(1)
+
+		// Same track in other playlists: reused at the same level, downloaded again at a lower one.
+		const same = await kemix.library.createPlaylist('spotify', 'Misma calidad', ['s1'])
+		await kemix.queue.enqueuePlaylist(same.playlistId!, undefined, null, 'max')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(1)
+
+		const mp3 = await kemix.library.createPlaylist('spotify', 'En MP3', ['s1'])
+		await kemix.queue.enqueuePlaylist(mp3.playlistId!, undefined, null, 'mp3_320')
+		await settle(kemix)
+		expect(downloader.levels).toEqual(['max', 'mp3_320'])
+
+		// Qobuz has nothing below MP3 320, so asking for MP3 128 reuses that file.
+		const mp3Low = await kemix.library.createPlaylist('spotify', 'En MP3 128', ['s1'])
+		await kemix.queue.enqueuePlaylist(mp3Low.playlistId!, undefined, null, 'mp3_128')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(2)
+		const tracks = (await kemix.library.getPlaylist(mp3Low.playlistId!)).tracks
+		expect(tracks[0]!.download?.status).toBe('done')
+	})
+
 	it('marks tracks as not downloaded when their file was deleted from disk', async () => {
 		await kemix.library.syncAll()
 		const [playlist] = kemix.library.listPlaylists()
@@ -230,6 +365,53 @@ describe('library + download queue', () => {
 		const after = await kemix.library.getPlaylist(playlist!.id)
 		expect(after.tracks.map((t) => t.download?.status)).toEqual([undefined, 'done', 'needs_review', 'needs_review'])
 		expect(after.downloads.done).toBe(1)
+	})
+
+	it('deletes a finished download with its file, keeping copies in other playlists', async () => {
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id)
+		await settle(kemix)
+		const other = await kemix.library.createPlaylist('spotify', 'Otra', ['s1'])
+		await kemix.queue.enqueuePlaylist(other.playlistId!)
+		await settle(kemix)
+
+		const file = (await kemix.library.getPlaylist(playlist!.id)).tracks[0]!.download!.path!
+		const row = kemix.queue.list().find((r) => r.playlistId === playlist!.id && r.title === 'One')!
+		await kemix.queue.remove(row.id)
+		await kemix.queue.flush()
+
+		expect(fs.existsSync(file)).toBe(false)
+		const detail = await kemix.library.getPlaylist(playlist!.id)
+		expect(detail.tracks.map((t) => t.download?.status)).toEqual([undefined, 'done', 'needs_review', 'needs_review'])
+		const m3u = fs.readFileSync(path.join(path.dirname(file), 'Mi Playlist_ Favoritas_.m3u8'), 'utf8')
+		expect(m3u).not.toContain('One.mp3')
+		expect(m3u).toContain('02 - Beta - Two.mp3')
+		// The other playlist has its own file, which stays.
+		expect((await kemix.library.getPlaylist(other.playlistId!)).tracks[0]!.download?.status).toBe('done')
+	})
+
+	it('stops a download deleted while running and leaves no file behind', async () => {
+		const stream = new PassThrough()
+		Object.assign(downloader, {
+			getTrack: async (url: string) => ({
+				meta: catalog.find((t) => t.url === url)!,
+				// Never ends on its own: only stopping the download finishes it.
+				open: async () => {
+					stream.write('partial-audio')
+					return { stream, mimeType: 'audio/mpeg', sizeBytes: 1000 }
+				}
+			})
+		})
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0])
+		const row = await waitFor(() => kemix.queue.list().find((r) => r.status === 'downloading' && r.bytes))
+
+		await kemix.queue.remove(row.id)
+		expect(kemix.queue.list()).toEqual([])
+		const folder = path.join(dir, 'music', 'Mi Playlist_ Favoritas_')
+		await waitFor(() => stream.destroyed && fs.readdirSync(folder).length === 0)
 	})
 
 	it('searches a connected service and creates a playlist there that shows up in the library', async () => {

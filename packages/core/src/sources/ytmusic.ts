@@ -1,12 +1,33 @@
-import { Innertube, YTNodes } from 'youtubei.js'
+import { Innertube, Parser, YTNodes } from 'youtubei.js'
 import type { Helpers, IParsedResponse } from 'youtubei.js'
 import type { SourceConnector } from './types'
 import type { AccountIdentity, SourcePlaylist, SourceTrack } from '../types'
+import { errorMessage, SessionExpiredError } from '../util'
 
 type YTNode = Helpers.YTNode
 
 function isPlaylistItem(node: YTNode): boolean {
 	return (node as { item_type?: string }).item_type === 'playlist'
+}
+
+const SESSION_EXPIRED =
+	'La sesión de YouTube Music caducó: Google ya no acepta las cookies guardadas. ' +
+	'Vuelve a conectar la cuenta en Cuentas con cookies recién exportadas.'
+
+/**
+ * Google doesn't reject reads made with dead cookies: it answers as a signed-out visitor (an empty library with a
+ * "sign in" prompt). The response's tracking params still say so, which is the only reliable tell.
+ */
+function isSignedOut(data: unknown): boolean {
+	type Params = { params?: { key?: string; value?: string }[] }[]
+	const services = (data as { responseContext?: { serviceTrackingParams?: Params } } | undefined)?.responseContext
+		?.serviceTrackingParams
+	return !!services?.some((s) => s.params?.some((p) => p.key === 'logged_in' && p.value === '0'))
+}
+
+/** Writes made with dead cookies do fail, with a 401. */
+function isUnauthorized(err: unknown): boolean {
+	return /status code 401\b/.test(errorMessage(err))
 }
 
 /**
@@ -69,19 +90,29 @@ export class YtMusicSource implements SourceConnector {
 
 	/**
 	 * Check the cookies really give a signed-in session and return who it is.
-	 * The library endpoint only answers for signed-in users, so it is the actual login test; the identity is best-effort.
+	 * Reading the library is the actual login test (see isSignedOut); the identity is best-effort.
 	 */
 	async verify(): Promise<AccountIdentity> {
 		const yt = await this.#client()
 		try {
-			await yt.music.getLibrary()
+			await this.#browse(yt, 'FEmusic_liked_playlists')
 		} catch (err) {
+			const reason =
+				err instanceof SessionExpiredError
+					? 'Google no reconoce estas cookies como una sesión iniciada (caducaron o se cerró esa sesión)'
+					: errorMessage(err)
 			throw new Error(
-				`YouTube rechazó la sesión: ${err instanceof Error ? err.message : String(err)}. ` +
-					'Exporta las cookies de nuevo con la sesión iniciada en music.youtube.com.'
+				`YouTube rechazó la sesión: ${reason}. Exporta las cookies de nuevo con la sesión iniciada en music.youtube.com.`
 			)
 		}
 		return this.identity()
+	}
+
+	/** First page of a YT Music browse endpoint, failing if Google answered as signed out. */
+	async #browse(yt: Innertube, browseId: string): Promise<IParsedResponse> {
+		const res = await yt.actions.execute('/browse', { client: 'YTMUSIC', browseId })
+		if (isSignedOut(res.data)) throw new SessionExpiredError(SESSION_EXPIRED)
+		return Parser.parseResponse(res.data)
 	}
 
 	/**
@@ -136,7 +167,8 @@ export class YtMusicSource implements SourceConnector {
 		const opts = { client: 'YTMUSIC', parse: true } as const
 		const items: YTNode[] = []
 		const seenTokens = new Set<string>()
-		let res: IParsedResponse = await new YTNodes.NavigationEndpoint({ browseEndpoint: { browseId } }).call(yt.actions, opts)
+		// Signed out, the library comes back empty: without this check a sync would flag every playlist as removed.
+		let res = await this.#browse(yt, browseId)
 		for (let page = 0; page < 50; page++) {
 			const memos = [res.contents_memo, res.continuation_contents_memo, res.on_response_received_actions_memo]
 			let next: (() => Promise<IParsedResponse>) | undefined
@@ -236,13 +268,19 @@ export class YtMusicSource implements SourceConnector {
 		const yt = await this.#client()
 		// Same call music.youtube.com makes (and the same client the library is read with). youtubei.js's
 		// playlist.create goes through the plain YouTube client instead.
-		const res = await yt.actions.execute('/playlist/create', {
-			client: 'YTMUSIC',
-			title: name,
-			description: 'Creada con Kemix',
-			privacyStatus: 'PRIVATE',
-			videoIds: trackIds
-		})
+		let res: Awaited<ReturnType<typeof yt.actions.execute>>
+		try {
+			res = await yt.actions.execute('/playlist/create', {
+				client: 'YTMUSIC',
+				title: name,
+				description: 'Creada con Kemix',
+				privacyStatus: 'PRIVATE',
+				videoIds: trackIds
+			})
+		} catch (err) {
+			if (isUnauthorized(err)) throw new SessionExpiredError(SESSION_EXPIRED)
+			throw err
+		}
 		const id = (res.data as { playlistId?: string } | undefined)?.playlistId
 		if (!res.success || !id) throw new Error(`YouTube Music no creó la playlist (código ${res.status_code})`)
 		// Make sure it really landed in this account before telling the user it did.

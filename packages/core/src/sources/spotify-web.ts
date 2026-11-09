@@ -39,7 +39,12 @@ interface RawLibraryItem {
 	count?: number
 	ownerV2?: { data?: { name?: string } }
 	images?: { items?: { sources?: { url: string; width?: number | null }[] }[] }
+	/** Changes with every edit of the playlist. */
+	revisionId?: string
 }
+
+/** Parallel requests when reading playlist sizes. */
+const COUNT_CONCURRENCY = 4
 
 const idFromUri = (uri: string | undefined, kind: string) => uri?.match(new RegExp(`^spotify:${kind}:([A-Za-z0-9]+)$`))?.[1]
 
@@ -69,6 +74,8 @@ export class SpotifyWebSource implements SourceConnector {
 	readonly service = 'spotify' as const
 	#session?: SpotifyWebSession
 	#pending?: Promise<SpotifyWebSession>
+	/** Playlist sizes already read, with the revision they belong to. */
+	#counts = new Map<string, { revision: string; count: number }>()
 
 	constructor(
 		initial: SpotifyWebSession | undefined,
@@ -160,15 +167,57 @@ export class SpotifyWebSource implements SourceConnector {
 					sourceId: id,
 					name: p.name ?? id,
 					owner: p.ownerV2?.data?.name,
-					coverUrl: largest(p.images?.items?.[0]?.sources)
+					coverUrl: largest(p.images?.items?.[0]?.sources),
+					snapshot: p.revisionId
 				})
 			}
 			if (!lib?.items?.length || offset + limit >= (lib.totalCount ?? 0)) break
 		}
+		await this.#fillCounts(out)
 		if (!likedListed && this.has('fetchLibraryTracks')) {
 			out.unshift({ sourceId: SPOTIFY_LIKED_ID, name: 'Canciones que te gustan' })
 		}
 		return out
+	}
+
+	/**
+	 * The library lists playlists without their size: read it from each one's first page (`limit: 1`). Sizes are kept
+	 * per revision, so later syncs only ask for playlists that changed. Best-effort: on any failure it stops asking
+	 * and those playlists keep the size the library last saw.
+	 */
+	async #fillCounts(playlists: SourcePlaylist[]) {
+		if (!this.has('fetchPlaylist')) return
+		const missing = playlists.filter((p) => {
+			if (p.sourceId === SPOTIFY_LIKED_ID || p.trackCount !== undefined) return false
+			const known = this.#counts.get(p.sourceId)
+			if (known && p.snapshot && known.revision === p.snapshot) {
+				p.trackCount = known.count
+				return false
+			}
+			return true
+		})
+		let next = 0
+		let failed = false
+		const worker = async () => {
+			while (!failed && next < missing.length) {
+				const p = missing[next++]!
+				try {
+					const data = await this.query<{ playlistV2?: { content?: { totalCount?: number } } }>('fetchPlaylist', {
+						uri: `spotify:playlist:${p.sourceId}`,
+						offset: 0,
+						limit: 1
+					})
+					const count = data.playlistV2?.content?.totalCount
+					if (count === undefined) continue
+					p.trackCount = count
+					if (p.snapshot) this.#counts.set(p.sourceId, { revision: p.snapshot, count })
+				} catch {
+					// Most likely rate-limited: don't keep hammering Spotify for a cosmetic number.
+					failed = true
+				}
+			}
+		}
+		await Promise.all(Array.from({ length: Math.min(COUNT_CONCURRENCY, missing.length) }, worker))
 	}
 
 	#template(op: string, key: string): boolean {

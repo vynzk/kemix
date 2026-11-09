@@ -18,7 +18,8 @@ import type {
 	DownloadService
 } from './types'
 import { SOURCE_SERVICES } from './types'
-import { errorMessage, now } from './util'
+import { sourceVideo } from './sources/youtube'
+import { errorMessage, now, SessionExpiredError } from './util'
 
 const SERVICE_NAMES: Record<SourceService, string> = {
 	spotify: 'Spotify',
@@ -136,6 +137,8 @@ export class Library {
 		try {
 			sourceId = await source.createPlaylist(title, trackIds)
 		} catch (err) {
+			// Mark the account as broken so Cuentas asks to reconnect it, as a failed sync does.
+			if (err instanceof SessionExpiredError) this.accounts.reportError(service, err)
 			throw new Error(`No se pudo crear la playlist en ${SERVICE_NAMES[service]}: ${errorMessage(err)}`)
 		}
 		const created: SourcePlaylist = { sourceId, name: title, trackCount: trackIds.length }
@@ -155,7 +158,10 @@ export class Library {
 		return { playlistId: row?.id ?? null }
 	}
 
-	/** With `partial`, `playlists` isn't the whole list, so the ones missing from it aren't flagged as removed. */
+	/**
+	 * With `partial`, `playlists` isn't the whole list, so the ones missing from it aren't flagged as removed.
+	 * A playlist listed without a size keeps the last one known (e.g. counted when its tracks were read).
+	 */
 	#upsertPlaylists(source: SourceService, playlists: SourcePlaylist[], opts: { partial?: boolean } = {}) {
 		tx(this.db, () => {
 			const upsert = this.db.prepare(
@@ -163,7 +169,7 @@ export class Library {
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
 				 ON CONFLICT(source, source_id) DO UPDATE SET
 				   name = excluded.name, owner = excluded.owner, cover_url = excluded.cover_url,
-				   track_count = excluded.track_count, snapshot = excluded.snapshot,
+				   track_count = COALESCE(excluded.track_count, playlists.track_count), snapshot = excluded.snapshot,
 				   synced_at = excluded.synced_at, removed = 0`
 			)
 			const t = now()
@@ -249,19 +255,15 @@ export class Library {
 		// The shared file registry is only swept on a full scan; the queue re-checks it before reusing a file anyway.
 		const files =
 			playlistId === undefined
-				? (this.db.prepare('SELECT target_service, target_id, path FROM files').all() as {
-						target_service: string
-						target_id: string
-						path: string
-					}[])
+				? (this.db.prepare('SELECT rowid AS id, path FROM files').all() as { id: number; path: string }[])
 				: []
 		const goneFiles = files.filter((f) => !fs.existsSync(f.path))
 		if (!gone.length && !goneFiles.length) return 0
 		tx(this.db, () => {
 			const del = this.db.prepare('DELETE FROM downloads WHERE id = ?')
 			for (const d of gone) del.run(d.id)
-			const delFile = this.db.prepare('DELETE FROM files WHERE target_service = ? AND target_id = ?')
-			for (const f of goneFiles) delFile.run(f.target_service, f.target_id)
+			const delFile = this.db.prepare('DELETE FROM files WHERE rowid = ?')
+			for (const f of goneFiles) delFile.run(f.id)
 		})
 		for (const id of new Set(gone.map((d) => d.playlist_id))) this.events.emit({ type: 'playlist', playlistId: id })
 		if (gone.length) this.events.emit({ type: 'library' })
@@ -325,7 +327,7 @@ export class Library {
 			.prepare(
 				`SELECT pt.position, t.id AS track_id, t.title, t.artists, t.album, t.duration_ms, t.isrc,
 				   m.status AS m_status, m.target_service, m.target_url, m.confidence, m.target_meta,
-				   d.status AS d_status, d.error AS d_error, d.path AS d_path, d.quality AS d_quality, d.service AS d_service
+				   d.id AS d_id, d.status AS d_status, d.error AS d_error, d.path AS d_path, d.quality AS d_quality, d.service AS d_service
 				 FROM playlist_tracks pt
 				 JOIN tracks t ON t.id = pt.track_id
 				 LEFT JOIN matches m ON m.track_id = t.id
@@ -346,6 +348,7 @@ export class Library {
 			target_url: string | null
 			confidence: number | null
 			target_meta: string | null
+			d_id: number | null
 			d_status: DownloadStatus | null
 			d_error: string | null
 			d_path: string | null
@@ -371,6 +374,7 @@ export class Library {
 				: null,
 			download: r.d_status
 				? {
+						id: r.d_id!,
 						status: r.d_status,
 						error: r.d_error,
 						path: r.d_path,
@@ -463,7 +467,7 @@ export class Library {
 	listReview(): ReviewItem[] {
 		const rows = this.db
 			.prepare(
-				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, m.candidates, m.status,
+				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, m.candidates, m.status,
 				   (SELECT json_group_array(DISTINCT p.name) FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
 				    WHERE pt.track_id = t.id) AS playlists
 				 FROM matches m JOIN tracks t ON t.id = m.track_id
@@ -478,21 +482,41 @@ export class Library {
 			album: string | null
 			duration_ms: number | null
 			source: SourceService
+			source_id: string
+			cover_url: string | null
 			candidates: string | null
 			status: MatchStatus
 			playlists: string
 		}[]
-		return rows.map((r) => ({
-			trackId: r.id,
-			title: r.title,
-			artists: JSON.parse(r.artists),
-			album: r.album,
-			durationMs: r.duration_ms,
-			source: r.source,
-			playlists: JSON.parse(r.playlists),
-			candidates: r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : [],
-			notFound: r.status === 'notfound'
-		}))
+		return rows.map((r) => {
+			const artists = JSON.parse(r.artists) as string[]
+			let candidates = r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : []
+			// A YouTube Music track is a video already: always offer that exact one (lossy), on top. Added here rather
+			// than when matching so it shows even when YouTube isn't among the download services.
+			const video = sourceVideo({
+				source: r.source,
+				sourceId: r.source_id,
+				title: r.title,
+				artists,
+				album: r.album ?? undefined,
+				durationMs: r.duration_ms ?? undefined,
+				coverUrl: r.cover_url ?? undefined
+			})
+			if (video) {
+				candidates = [{ ...video, score: 1 }, ...candidates.filter((c) => !(c.service === 'youtube' && c.id === video.id))]
+			}
+			return {
+				trackId: r.id,
+				title: r.title,
+				artists,
+				album: r.album,
+				durationMs: r.duration_ms,
+				source: r.source,
+				playlists: JSON.parse(r.playlists),
+				candidates,
+				notFound: r.status === 'notfound'
+			}
+		})
 	}
 
 	getTrack(trackId: number) {

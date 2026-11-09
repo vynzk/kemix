@@ -24,7 +24,7 @@ Las descargas van a `~/Music/Kemix/<Playlist>/NN - Artista - Título.flac`, con 
 | Qobuz | Botón "Iniciar sesión en Qobuz": abre play.qobuz.com en una ventana y Kemix captura la sesión al entrar (usa email y contraseña; el login con Google suele bloquearse en ventanas de apps). Solo disponible en la app de escritorio. |
 | Deezer | Las cookies de deezer.com (recomendado: archivo de Get cookies.txt; Kemix toma la cookie `arl`) o solo el valor de `arl` (DevTools → Application → Cookies). Caduca cada pocos meses. |
 | Spotify | **Cualquier cuenta (sin Premium)**, solo en la app de escritorio: "Iniciar sesión en Spotify" abre open.spotify.com en una ventana y Kemix usa la API interna del reproductor web (la Web API pública rechaza ese token con 429); la sesión se renueva sola cada hora en una ventana oculta. Carga playlists y Me gusta y permite buscar, pero no crear playlists ni leer ISRC (el matching va por título, artista y duración). **Premium (Client ID)**: una app propia en developer.spotify.com con el Redirect URI `http://127.0.0.1:47800/api/auth/spotify/callback`; pega su Client ID. Spotify solo abre su Web API a cuentas Premium: si la cuenta es gratis, Kemix avisa y propone el otro método. |
-| YouTube Music | Las cookies de music.youtube.com (archivo de Get cookies.txt o el header `cookie`). Si hay varias cuentas de Google en la sesión, Kemix pregunta cuál usar. |
+| YouTube Music | Las cookies de music.youtube.com (archivo de Get cookies.txt o el header `cookie`). Si hay varias cuentas de Google en la sesión, Kemix pregunta cuál usar. Google renueva estas cookies mientras el sitio sigue abierto y la copia exportada deja de valer: expórtalas desde una ventana de incógnito y ciérrala justo después, sin cerrar sesión. |
 
 **Cómo sacar cookies.txt:** instala la extensión [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
 (Chrome/Edge/Firefox; la versión LOCALLY no envía las cookies a ningún servidor), inicia sesión en el sitio
@@ -44,9 +44,16 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   por texto (título + artista + duración). Lo que no supera el umbral (90% por defecto) va a **Revisión**.
 - **Cola**: persistente (sigue después de cerrar la app), con 3 descargas simultáneas y 3 reintentos. Si un tema ya se
   bajó para otra playlist, se enlaza (hardlink) en lugar de volver a descargarlo. En cada playlist se pueden marcar
-  temas sueltos y descargar solo esos.
+  temas sueltos y descargar solo esos. Cada descarga se puede eliminar, en "Descargas" o en la fila del tema dentro de
+  la playlist (aparece al pasar el ratón): si está en curso se detiene, y si ya terminó se borra su archivo del disco
+  (las copias en otras playlists se quedan). "Limpiar terminadas" solo las quita de la lista.
 - **Calidad**: antes de bajar se muestra la máxima disponible (Qobuz: la del tema, p. ej. FLAC 24-bit/96 kHz; Deezer:
-  la que permite la cuenta). Después se muestra la calidad real, leída del archivo descargado.
+  la que permite la cuenta). Después se muestra la calidad real, leída del archivo descargado, y el proveedor del que
+  vino. Al elegir un proveedor en la playlist, solo se ofrecen las calidades que da ese proveedor con tu cuenta. Se puede descargar en la
+  máxima disponible o con un tope: Hi-Res hasta 24-bit/96 kHz, CD (FLAC 16-bit/44.1 kHz), MP3 320 o MP3 128. El valor
+  por defecto está en Ajustes y cada playlist puede elegir otro al descargar; si un tema no existe en esa calidad se baja
+  en la mejor que tenga por debajo. Qobuz no baja de MP3 320 y el único FLAC de Deezer es 16-bit/44.1 kHz. Los temas
+  ya descargados no cambian; un archivo solo se reutiliza para otra playlist si se bajó en la misma calidad.
 - **Buscar y crear playlists**: en "Buscar" eliges un servicio conectado, buscas temas, los agregas a una playlist nueva
   (con orden) y se crea como privada en tu cuenta de ese servicio; luego aparece en la Biblioteca. Spotify pide permiso
   de escritura: las conexiones hechas antes de esta función deben desconectarse y volver a conectarse.
@@ -63,7 +70,6 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
 
 - `lucida` 2.0.0-54 no se actualiza desde enero de 2025. Solo se importa en `packages/core/src/download/lucida-adapter.ts`,
   así que se puede parchear o reemplazar ahí.
-- Qobuz siempre descarga la máxima calidad disponible (lucida no permite elegirla).
 - Spotify (en modo desarrollo) no da acceso a playlists generadas por Spotify (Daily Mix, Discover Weekly…).
 - La integración con YouTube Music no es oficial y puede romperse cuando YouTube cambie su web.
 - Descargar desde estos servicios va contra sus términos de uso; es para uso personal.

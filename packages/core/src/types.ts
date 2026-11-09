@@ -9,6 +9,7 @@ export type DownloadService = TargetService | 'youtube'
 export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer']
 export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer']
 export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'youtube']
+export const DOWNLOAD_SERVICE_LABEL: Record<DownloadService, string> = { qobuz: 'Qobuz', deezer: 'Deezer', youtube: 'YouTube' }
 
 export function isDownloadService(s: unknown): s is DownloadService {
 	return typeof s === 'string' && (DOWNLOAD_SERVICES as string[]).includes(s)
@@ -37,6 +38,28 @@ export interface SourceTrack {
 	isrc?: string
 	coverUrl?: string
 	url?: string
+}
+
+/**
+ * Quality to download in: the best the service has, or a ceiling. Each service gives the best it has up to it.
+ * Qobuz has nothing below MP3 320, Deezer has a single lossless format (16-bit/44.1 kHz), and YouTube always gives
+ * its one audio format.
+ */
+export type QualityLevel = 'max' | 'hires96' | 'cd' | 'mp3_320' | 'mp3_128'
+export const QUALITY_LEVELS: QualityLevel[] = ['max', 'hires96', 'cd', 'mp3_320', 'mp3_128']
+
+export function isQualityLevel(s: unknown): s is QualityLevel {
+	return typeof s === 'string' && (QUALITY_LEVELS as string[]).includes(s)
+}
+
+/**
+ * The levels that come out the same on a service, collapsed into one, so files downloaded at any of them can be
+ * reused for the others.
+ */
+export function serviceQualityLevel(service: DownloadService, level: QualityLevel): QualityLevel {
+	if (service === 'youtube') return 'max'
+	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
+	return level === 'mp3_128' ? 'mp3_320' : level
 }
 
 /** Audio quality of a stream or file. */
@@ -103,6 +126,8 @@ export interface Settings {
 	downloadDir: string
 	/** Services tried, in order, when a download has no provider chosen. YouTube (lossy) only if the user adds it. */
 	servicePriority: DownloadService[]
+	/** Default quality for downloads; each download can pick another. */
+	downloadQuality: QualityLevel
 	concurrency: number
 	autoAcceptThreshold: number
 	spotifyClientId: string
@@ -150,6 +175,8 @@ export interface PlaylistTrackRow {
 		maxQuality: AudioQuality | null
 	} | null
 	download: {
+		/** The download's id, as in `DownloadRow`. */
+		id: number
 		status: DownloadStatus
 		error: string | null
 		path: string | null
@@ -215,4 +242,5 @@ export type KemixEvent =
 	| { type: 'sync'; state: 'start' | 'progress' | 'done' | 'error'; message?: string }
 	| { type: 'playlist'; playlistId: number }
 	| { type: 'download'; row: DownloadRow }
+	| { type: 'download-removed'; id: number; playlistId: number }
 	| { type: 'review' }

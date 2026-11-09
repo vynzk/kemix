@@ -3,7 +3,8 @@ import { PassThrough, Readable } from 'node:stream'
 import { Innertube, YTNodes } from 'youtubei.js'
 import type { AudioStream, Downloader } from '../download/lucida-adapter'
 import type { AudioQuality, SourceTrack, TargetTrack, YouTubePreview } from '../types'
-import { scoreYouTube, searchQuery } from '../match/score'
+import { cleanArtist, searchQueries } from '../match/score'
+import { searchService, YOUTUBE_MIN_SCORE } from '../match/resolve'
 import { errorMessage } from '../util'
 
 /** What YouTube typically serves for audio (AAC ~128 kbps or Opus ~130 kbps): always lossy. */
@@ -17,20 +18,30 @@ export function youtubeUrl(videoId: string) {
 	return `https://www.youtube.com/watch?v=${videoId}`
 }
 
+/**
+ * The video a track imported from YouTube Music already is (its source ID): the exact recording, the same one the
+ * player plays for it. Null for tracks from anywhere else.
+ */
+export function sourceVideo(track: SourceTrack & { source?: string }): TargetTrack | null {
+	if (track.source !== 'ytmusic' || !/^[\w-]{11}$/.test(track.sourceId)) return null
+	return {
+		service: 'youtube',
+		id: track.sourceId,
+		url: youtubeUrl(track.sourceId),
+		title: track.title,
+		artists: track.artists,
+		album: track.album,
+		durationMs: track.durationMs,
+		coverUrl: track.coverUrl,
+		maxQuality: YOUTUBE_QUALITY
+	}
+}
+
 function videoIdFromUrl(url: string): string {
 	const u = new URL(url)
 	const id = u.searchParams.get('v') ?? (u.hostname === 'youtu.be' ? u.pathname.slice(1) : null)
 	if (!id || !/^[\w-]{11}$/.test(id)) throw new Error(`URL de YouTube no válida: ${url}`)
 	return id
-}
-
-/** Channel names like "Daft Punk - Topic" or "DaftPunkVEVO" → "Daft Punk". */
-function cleanChannel(name: string): string {
-	return name
-		.replace(/\s+-\s+Topic$/i, '')
-		.replace(/VEVO$/, '')
-		.replace(/\s+Official$/i, '')
-		.trim()
 }
 
 /**
@@ -66,7 +77,7 @@ export class YouTube {
 					id: v.video_id,
 					url: youtubeUrl(v.video_id),
 					title: v.title.toString(),
-					artists: v.author?.name ? [cleanChannel(v.author.name)] : [],
+					artists: v.author?.name ? [cleanArtist(v.author.name)] : [],
 					durationMs: v.duration?.seconds ? v.duration.seconds * 1000 : undefined,
 					coverUrl: thumbs[0]?.url,
 					maxQuality: YOUTUBE_QUALITY
@@ -74,10 +85,13 @@ export class YouTube {
 			})
 	}
 
-	/** YouTube results for a track, best match first. */
-	async candidates(track: Pick<SourceTrack, 'title' | 'artists' | 'durationMs'>, query?: string) {
-		const results = await this.search(query?.trim() || searchQuery(track), 10)
-		return results.map((r) => ({ ...r, score: scoreYouTube(track, r) })).sort((a, b) => b.score - a.score)
+	/**
+	 * YouTube results for a track, best match first: the given query, or broader searches until one convinces.
+	 * A YouTube Music track's own video always comes first.
+	 */
+	candidates(track: SourceTrack & { source?: string }, query?: string) {
+		const queries = query?.trim() ? [query.trim()] : searchQueries(track)
+		return searchService(track, this.downloader(), queries, YOUTUBE_MIN_SCORE)
 	}
 
 	/** A video to listen to the track. Tracks imported from YouTube Music already are one. */
@@ -132,9 +146,22 @@ export class YouTube {
 
 	async #openWithYtDlp(bin: string, videoId: string): Promise<AudioStream> {
 		// Prefer m4a (AAC): plays everywhere and takes tags. No ffmpeg needed since nothing is re-encoded.
+		// YouTube answers 403 unless yt-dlp can solve its JS challenges: it only looks for Deno by default,
+		// so also let it use Node (adds to Deno, doesn't replace it).
 		const child = spawn(
 			bin,
-			['-f', 'bestaudio[ext=m4a]/bestaudio', '--no-playlist', '--no-progress', '--quiet', '-o', '-', youtubeUrl(videoId)],
+			[
+				'--js-runtimes',
+				'node',
+				'-f',
+				'bestaudio[ext=m4a]/bestaudio',
+				'--no-playlist',
+				'--no-progress',
+				'--quiet',
+				'-o',
+				'-',
+				youtubeUrl(videoId)
+			],
 			{ windowsHide: true }
 		)
 		let stderr = ''
@@ -169,6 +196,7 @@ export class YouTube {
 			service: 'youtube',
 			isrcLookup: async () => null,
 			search: (query, limit) => this.search(query, limit),
+			exact: sourceVideo,
 			accountInfo: async () => ({}),
 			accountQuality: async () => YOUTUBE_QUALITY,
 			getTrack: async (url) => {

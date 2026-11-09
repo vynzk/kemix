@@ -1,16 +1,18 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { MatchCandidate, ReviewItem } from '@kemix/core'
+import type { DownloadService, MatchCandidate, ReviewItem } from '@kemix/core'
 import { api } from '../lib/api'
+import { useDownloadProviders } from '../lib/hooks'
 import { SERVICE_LABEL, cx, duration, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Cover, Empty, ErrorText, Input, PageHeader, ServiceDot } from '../components/ui'
-import { PlayButton, usePlayer } from '../components/Player'
+import { Button, Cover, Empty, ErrorText, Input, PageHeader, Select, ServiceDot } from '../components/ui'
+import { PlayButton, candidateKey, usePlayer } from '../components/Player'
 
 const YOUTUBE_NOTE = 'No es calidad máxima: AAC ~128 kbps, con pérdida.'
 
 export function ReviewPage() {
 	const qc = useQueryClient()
 	const review = useQuery({ queryKey: ['review'], queryFn: api.review })
+	const providers = useDownloadProviders()
 	const items = review.data ?? []
 	const notFound = items.filter((i) => i.notFound)
 	const bulk = useMutation({
@@ -35,8 +37,8 @@ export function ReviewPage() {
 					)
 				}
 			>
-				Temas que no encontré con seguridad en Qobuz/Deezer. Elige la versión correcta, busca a mano, bájalos desde
-				YouTube u omítelos.
+				Temas que no encontré con seguridad. Escucha las opciones (▶), elige la versión correcta, busca a mano en el
+				proveedor que quieras y decide desde dónde bajarla, u omítelos.
 				{bulk.data && (
 					<span className="ml-1 text-zinc-300">
 						{bulk.data.queued} en cola desde YouTube
@@ -50,7 +52,7 @@ export function ReviewPage() {
 			) : (
 				<ul className="divide-y divide-line">
 					{items.map((item) => (
-						<ReviewRow key={item.trackId} item={item} />
+						<ReviewRow key={item.trackId} item={item} providers={providers} />
 					))}
 				</ul>
 			)}
@@ -58,171 +60,236 @@ export function ReviewPage() {
 	)
 }
 
-function ReviewRow({ item }: { item: ReviewItem }) {
+function providerOption(s: DownloadService, prefix = '') {
+	return (
+		<option key={s} value={s}>
+			{prefix}
+			{SERVICE_LABEL[s]}
+			{s === 'youtube' ? ' (con pérdida)' : ''}
+		</option>
+	)
+}
+
+function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadService[] }) {
 	const qc = useQueryClient()
 	const player = usePlayer()
 	const [query, setQuery] = useState('')
-	const [results, setResults] = useState<MatchCandidate[] | null>(null)
-	const [ytResults, setYtResults] = useState<MatchCandidate[] | null>(null)
-	/** YouTube candidate waiting for the user to confirm the lower quality. */
+	/** '' = every connected service, in the priority set in Ajustes. */
+	const [searchIn, setSearchIn] = useState<DownloadService | ''>('')
+	/** '' = each candidate from its own service. */
+	const [downloadFrom, setDownloadFrom] = useState<DownloadService | ''>('')
+	const [results, setResults] = useState<{ from: DownloadService | ''; list: MatchCandidate[] } | null>(null)
+	/** Candidate waiting for the user to confirm a lossy (YouTube) download. */
 	const [confirming, setConfirming] = useState<string | null>(null)
+	// A provider disconnected since it was picked falls back to automatic.
+	const searchFrom = searchIn && providers.includes(searchIn) ? searchIn : ''
+	const from = downloadFrom && providers.includes(downloadFrom) ? downloadFrom : ''
+
 	const done = () => {
 		qc.invalidateQueries({ queryKey: ['review'] })
 		qc.invalidateQueries({ queryKey: ['library'] })
 	}
-	const accept = useMutation({ mutationFn: (c: MatchCandidate) => api.accept(item.trackId, c), onSuccess: done })
+	const accept = useMutation({ mutationFn: (c: MatchCandidate) => api.accept(item.trackId, c, from || null), onSuccess: done })
 	const skip = useMutation({ mutationFn: () => api.skip(item.trackId), onSuccess: done })
 	const search = useMutation({
-		mutationFn: () => api.searchCandidates(item.trackId, query),
-		onSuccess: setResults
+		mutationFn: () => api.searchCandidates(item.trackId, query, searchFrom || null),
+		onSuccess: (list) => {
+			setResults({ from: searchFrom, list })
+			setConfirming(null)
+		}
 	})
-	const ytSearch = useMutation({
-		mutationFn: () => api.youtubeCandidates(item.trackId, query),
-		onSuccess: setYtResults
-	})
-	const candidates = results ?? item.candidates
+	const candidates = results?.list ?? item.candidates
 	const busy = accept.isPending || skip.isPending
+	/** Where a candidate would actually be downloaded from. */
+	const downloadService = (c: MatchCandidate) => from || c.service
+	const lossyShown = from === 'youtube' || (!from && candidates.some((c) => c.service === 'youtube'))
 
 	return (
-		<li className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-8 px-8 py-6">
-			<div className="space-y-1">
+		// minmax(0, …) and min-w-0 on both columns: long titles truncate instead of widening the page.
+		<li className="grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-6 md:grid-cols-[minmax(200px,1fr)_minmax(0,2fr)]">
+			<div className="min-w-0 space-y-1">
 				<ServiceDot service={item.source} withLabel />
-				<div className="flex items-center gap-2">
+				<div className="flex items-start gap-2">
 					<PlayButton
 						active={player.playing?.trackId === item.trackId}
 						onClick={() => player.playTrack({ trackId: item.trackId, title: item.title, artists: item.artists })}
 					/>
-					<p className="font-medium">{item.title}</p>
+					<p className="min-w-0 font-medium break-words">{item.title}</p>
 				</div>
-				<p className="text-sm text-muted">{item.artists.join(', ')}</p>
-				<p className="text-xs text-zinc-500">
+				<p className="text-sm break-words text-muted">{item.artists.join(', ')}</p>
+				<p className="text-xs break-words text-zinc-500">
 					{item.album && `${item.album} · `}
 					{duration(item.durationMs)}
 				</p>
-				<p className="pt-1 text-xs text-zinc-600">En: {item.playlists.join(', ')}</p>
-				{item.notFound && <p className="pt-1 text-xs text-amber-300/80">No está en Qobuz ni Deezer.</p>}
-				<div className="flex gap-2 pt-3">
-					<Button variant="ghost" onClick={() => skip.mutate()} disabled={busy}>
-						Omitir
-					</Button>
+				<p className="pt-1 text-xs break-words text-zinc-600">En: {item.playlists.join(', ')}</p>
+				{item.notFound && (
+					<p className="pt-1 text-xs text-amber-300/80">No se encontró una coincidencia fiable en Qobuz/Deezer.</p>
+				)}
+				<div className="space-y-1 pt-3">
+					<label className="block text-xs text-muted" htmlFor={`from-${item.trackId}`}>
+						Bajar desde
+					</label>
+					<div className="flex flex-wrap items-center gap-2">
+						<Select
+							id={`from-${item.trackId}`}
+							value={from}
+							onChange={(e) => {
+								setDownloadFrom(e.target.value as DownloadService | '')
+								setConfirming(null)
+							}}
+						>
+							<option value="">El servicio de cada opción</option>
+							{providers.map((s) => providerOption(s))}
+						</Select>
+						<Button variant="ghost" onClick={() => skip.mutate()} disabled={busy}>
+							Omitir
+						</Button>
+					</div>
+					{from && (
+						<p className="text-[11px] text-zinc-500">
+							Si eliges una opción de otro servicio, busco ese mismo tema en {SERVICE_LABEL[from]} y lo bajo desde ahí.
+						</p>
+					)}
 				</div>
 			</div>
-			<div className="space-y-3">
+
+			<div className="min-w-0 space-y-3">
 				<form
-					className="flex gap-2"
+					className="flex flex-wrap gap-2"
 					onSubmit={(e) => {
 						e.preventDefault()
 						search.mutate()
 					}}
 				>
-					<Input
-						placeholder={`Buscar a mano (por defecto: ${item.artists[0] ?? ''} ${item.title})`}
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-					/>
+					<div className="min-w-48 flex-1">
+						<Input
+							placeholder={`Buscar a mano (por defecto: ${item.artists[0] ?? ''} ${item.title})`}
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+						/>
+					</div>
+					<Select
+						value={searchFrom}
+						onChange={(e) => setSearchIn(e.target.value as DownloadService | '')}
+						title="Dónde buscar"
+					>
+						<option value="">En todos (prioridad)</option>
+						{providers.map((s) => providerOption(s, 'En '))}
+					</Select>
 					<Button type="submit" disabled={search.isPending}>
 						{search.isPending ? 'Buscando…' : 'Buscar'}
 					</Button>
-					<Button
-						type="button"
-						variant={item.notFound ? 'default' : 'ghost'}
-						onClick={() => ytSearch.mutate()}
-						disabled={ytSearch.isPending}
-						title="Buscar en YouTube (calidad menor)"
-					>
-						{ytSearch.isPending ? 'Buscando…' : 'YouTube'}
-					</Button>
 				</form>
-				<ErrorText error={search.error ?? accept.error ?? skip.error ?? ytSearch.error} />
+				<ErrorText error={search.error ?? accept.error ?? skip.error} />
+				{(results || lossyShown) && (
+					<p className="text-xs text-muted">
+						{results && (results.from ? `Resultados en ${SERVICE_LABEL[results.from]}` : 'Resultados')}
+						{lossyShown && (
+							<span className="text-amber-300/80">
+								{results && ' · '}
+								YouTube: {YOUTUBE_NOTE}
+							</span>
+						)}
+					</p>
+				)}
 				{candidates.length === 0 ? (
 					<p className="text-sm text-muted">
-						Sin candidatos en Qobuz/Deezer. Prueba con otra búsqueda{item.notFound ? ' o búscalo en YouTube' : ''}.
+						{results?.from ? `Nada en ${SERVICE_LABEL[results.from]} para esa búsqueda.` : 'Sin opciones.'} Prueba con
+						otra búsqueda u otro proveedor.
 					</p>
 				) : (
 					<ul className="space-y-1">
-						{candidates.map((c) => (
-							<CandidateRow key={`${c.service}:${c.id}`} c={c}>
-								<Button variant="primary" onClick={() => accept.mutate(c)} disabled={busy}>
-									Usar
-								</Button>
-							</CandidateRow>
-						))}
-					</ul>
-				)}
-				{ytResults && (
-					<div className="space-y-1 pt-2">
-						<p className="text-xs text-muted">
-							YouTube <span className="text-amber-300/80">· {YOUTUBE_NOTE}</span>
-						</p>
-						{ytResults.length === 0 ? (
-							<p className="text-sm text-muted">Nada en YouTube para esa búsqueda.</p>
-						) : (
-							<ul className="space-y-1">
-								{ytResults.slice(0, 5).map((c) => (
-									<CandidateRow
-										key={c.id}
-										c={c}
-										onPlay={() => player.playVideo({ videoId: c.id, title: c.title, artists: c.artists })}
-									>
-										{confirming === c.id ? (
-											<>
-												<Button variant="primary" onClick={() => accept.mutate(c)} disabled={busy}>
-													Bajar igualmente
-												</Button>
-												<Button variant="ghost" onClick={() => setConfirming(null)}>
-													Cancelar
-												</Button>
-											</>
-										) : (
-											<Button onClick={() => setConfirming(c.id)} disabled={busy}>
-												Usar
+						{candidates.map((c) => {
+							const key = candidateKey(c)
+							const service = downloadService(c)
+							return (
+								<CandidateRow key={key} c={c} active={player.playing?.key === key} onPlay={() => player.playCandidate(c)}>
+									{confirming === key ? (
+										<>
+											<Button variant="primary" onClick={() => accept.mutate(c)} disabled={busy}>
+												Bajar igualmente
 											</Button>
-										)}
-									</CandidateRow>
-								))}
-							</ul>
-						)}
-					</div>
+											<Button variant="ghost" onClick={() => setConfirming(null)}>
+												Cancelar
+											</Button>
+										</>
+									) : (
+										<Button
+											variant={service === 'youtube' ? 'default' : 'primary'}
+											onClick={() => (service === 'youtube' ? setConfirming(key) : accept.mutate(c))}
+											disabled={busy}
+											title={
+												service === c.service
+													? `Bajar esta versión desde ${SERVICE_LABEL[service]}`
+													: `Buscar esta misma versión en ${SERVICE_LABEL[service]} y bajarla desde ahí`
+											}
+										>
+											{accept.isPending && accept.variables === c ? 'Encolando…' : 'Usar'}
+										</Button>
+									)}
+								</CandidateRow>
+							)
+						})}
+					</ul>
 				)}
 			</div>
 		</li>
 	)
 }
 
-function CandidateRow({ c, onPlay, children }: { c: MatchCandidate; onPlay?: () => void; children: ReactNode }) {
+/** One option for a review item. Everything but the title wraps or truncates, so long titles never widen the page. */
+function CandidateRow({
+	c,
+	active,
+	onPlay,
+	children
+}: {
+	c: MatchCandidate
+	active: boolean
+	onPlay: () => void
+	children: ReactNode
+}) {
 	return (
-		<li className="flex items-center gap-3 rounded-md border border-line px-3 py-2 hover:bg-panel">
-			{onPlay ? (
-				<div className="relative shrink-0">
-					<Cover url={c.coverUrl} size={36} />
-					<span className="absolute inset-0 flex items-center justify-center">
-						<PlayButton onClick={onPlay} />
-					</span>
-				</div>
-			) : (
-				<Cover url={c.coverUrl} size={36} />
+		<li
+			className={cx(
+				'flex items-center gap-3 rounded-md border px-3 py-2 hover:bg-panel',
+				active ? 'border-accent/40 bg-panel' : 'border-line'
 			)}
+		>
+			<div className="relative shrink-0">
+				<Cover url={c.coverUrl} size={40} />
+				<span className="absolute inset-0 flex items-center justify-center">
+					<PlayButton active={active} onClick={onPlay} />
+				</span>
+			</div>
 			<div className="min-w-0 flex-1">
-				<p className="truncate text-sm">{c.title}</p>
+				<p className={cx('truncate text-sm', active && 'text-accent')} title={c.title}>
+					{c.title}
+				</p>
 				<p className="truncate text-xs text-muted">
 					{c.artists.join(', ')}
 					{c.album && ` · ${c.album}`}
 				</p>
+				<p className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-muted">
+					<span>{SERVICE_LABEL[c.service]}</span>
+					<span>· {duration(c.durationMs)}</span>
+					{c.maxQuality && (
+						<span className={qualityTone(c.maxQuality)} title="Máxima calidad disponible">
+							· {qualityLabel(c.maxQuality)}
+						</span>
+					)}
+				</p>
 			</div>
-			<span className="text-xs text-muted">{duration(c.durationMs)}</span>
-			<span className={cx('w-28 text-right text-xs', qualityTone(c.maxQuality))} title="Máxima calidad disponible">
-				{qualityLabel(c.maxQuality)}
-			</span>
-			<span className="w-16 text-xs text-muted">{SERVICE_LABEL[c.service]}</span>
 			<span
+				title="Parecido con el tema original"
 				className={cx(
-					'w-10 text-right text-xs font-medium',
+					'w-10 shrink-0 text-right text-xs font-medium',
 					c.score >= 0.85 ? 'text-emerald-300' : c.score >= 0.6 ? 'text-amber-300' : 'text-red-300'
 				)}
 			>
 				{Math.round(c.score * 100)}%
 			</span>
-			{children}
+			<div className="flex shrink-0 flex-col items-stretch gap-1">{children}</div>
 		</li>
 	)
 }

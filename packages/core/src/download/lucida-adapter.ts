@@ -3,9 +3,10 @@ import { Readable } from 'node:stream'
 import Qobuz from 'lucida/streamers/qobuz/main.js'
 import Deezer from 'lucida/streamers/deezer/main.js'
 import { parseTrack as parseQobuzTrack, type RawTrack as LucidaRawQobuzTrack } from 'lucida/streamers/qobuz/parse.js'
-import type { Track as LucidaTrack, CoverArtwork } from 'lucida/types'
-import type { AudioQuality, DownloadService, TargetService, TargetTrack } from '../types'
+import type { Track as LucidaTrack, CoverArtwork, GetStreamResponse } from 'lucida/types'
+import type { AudioQuality, DownloadService, QualityLevel, SourceTrack, TargetService, TargetTrack } from '../types'
 import { QobuzApi } from '../sources/qobuz'
+import { DeezerSource } from '../sources/deezer'
 
 export interface AudioStream {
 	stream: Readable
@@ -18,7 +19,13 @@ export interface Downloader {
 	readonly service: DownloadService
 	isrcLookup(isrc: string): Promise<TargetTrack | null>
 	search(query: string, limit: number): Promise<TargetTrack[]>
-	getTrack(url: string): Promise<{ meta: TargetTrack; open(): Promise<AudioStream> }>
+	/**
+	 * This very recording, when the track's source already points at it on this service (a YouTube Music track is a
+	 * YouTube video): no search needed, and no search can do better.
+	 */
+	exact?(track: SourceTrack & { source?: string }): TargetTrack | null
+	/** `open` gives the best audio the track has up to `level`. */
+	getTrack(url: string): Promise<{ meta: TargetTrack; open(level: QualityLevel): Promise<AudioStream> }>
 	accountInfo(): Promise<{ premium?: boolean; country?: string }>
 	/** Best quality this account can download (the subscription's ceiling, not a specific track's). */
 	accountQuality(): Promise<AudioQuality>
@@ -44,6 +51,11 @@ abstract class LucidaDownloader implements Downloader {
 		return { ...t, maxQuality: t.maxQuality ?? this.quality(t) }
 	}
 
+	/** Start a track's audio at (up to) `level`; overridden by services that can choose. */
+	protected openStream(getStream: () => Promise<GetStreamResponse>, _level: QualityLevel): Promise<GetStreamResponse> {
+		return getStream()
+	}
+
 	async isrcLookup(isrc: string): Promise<TargetTrack | null> {
 		try {
 			const track = await this.streamer.isrcLookup(isrc)
@@ -65,8 +77,8 @@ abstract class LucidaDownloader implements Downloader {
 		if (res.type !== 'track') throw new Error(`La URL no es un track: ${url}`)
 		return {
 			meta: this.withQuality(toTarget(this.service, res.metadata)),
-			open: async (): Promise<AudioStream> => {
-				const s = await res.getStream()
+			open: async (level: QualityLevel): Promise<AudioStream> => {
+				const s = await this.openStream(() => res.getStream(), level)
 				const stream = s.stream instanceof Readable ? s.stream : Readable.from(s.stream as AsyncIterable<Buffer>)
 				return { stream, mimeType: s.mimeType, sizeBytes: Number.isFinite(s.sizeBytes) ? s.sizeBytes : undefined }
 			}
@@ -96,15 +108,23 @@ function qobuzQuality(raw: RawQobuzTrack): AudioQuality {
 }
 
 /**
- * Qobuz: searches and metadata go straight to the API so we keep each track's maximum bit depth / sample rate
- * (lucida's parser drops them). Audio still comes from lucida, which always asks for the best format (id 27).
+ * Qobuz format ids: 27 = FLAC up to 24-bit/192 kHz, 7 = FLAC up to 24-bit/96 kHz, 6 = FLAC 16-bit/44.1 kHz,
+ * 5 = MP3 320 (the lowest it has). Qobuz sends the best format the track has up to the one asked for.
+ */
+const QOBUZ_FORMAT: Record<QualityLevel, number> = { max: 27, hires96: 7, cd: 6, mp3_320: 5, mp3_128: 5 }
+
+/**
+ * Qobuz: searches, metadata and audio go straight to the API, so we keep each track's maximum bit depth / sample
+ * rate (lucida's parser drops them) and can pick the format (lucida always asks for id 27).
  */
 class QobuzDownloader extends LucidaDownloader {
 	#api: QobuzApi
+	#appSecret: string
 
 	constructor(opts: { appId: string; appSecret: string; token: string }) {
 		super('qobuz', new Qobuz(opts))
 		this.#api = new QobuzApi({ appId: opts.appId, token: opts.token })
+		this.#appSecret = opts.appSecret
 	}
 
 	#toTarget(raw: RawQobuzTrack): TargetTrack {
@@ -149,14 +169,25 @@ class QobuzDownloader extends LucidaDownloader {
 	}
 
 	override async getTrack(url: string) {
-		const base = await super.getTrack(url)
 		const id = url.match(/track\/(\d+)/)?.[1]
-		if (!id) return base
-		try {
-			const raw = await this.#api.get<RawQobuzTrack>('track/get', { track_id: id })
-			return { ...base, meta: { ...base.meta, maxQuality: qobuzQuality(raw) } }
-		} catch {
-			return base
+		if (!id) throw new Error(`La URL no es un track de Qobuz: ${url}`)
+		const raw = await this.#api.get<RawQobuzTrack>('track/get', { track_id: id })
+		return { meta: this.#toTarget(raw), open: (level: QualityLevel) => this.#open(id, level) }
+	}
+
+	async #open(trackId: string, level: QualityLevel): Promise<AudioStream> {
+		const formatId = QOBUZ_FORMAT[level]
+		const file = await this.#api.fileUrl(trackId, formatId, this.#appSecret)
+		if (!file.url || file.sample) {
+			throw new Error('Qobuz solo entrega un fragmento de este tema: puede ser solo de compra o la suscripción no está activa')
+		}
+		const res = await fetch(file.url)
+		if (!res.ok || !res.body) throw new Error(`Qobuz no entregó el audio (HTTP ${res.status})`)
+		const size = Number(res.headers.get('content-length'))
+		return {
+			stream: Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+			mimeType: file.mime_type ?? (formatId === 5 ? 'audio/mpeg' : 'audio/flac'),
+			sizeBytes: size > 0 ? size : undefined
 		}
 	}
 }
@@ -164,11 +195,45 @@ class QobuzDownloader extends LucidaDownloader {
 /** Deezer formats (lucida's DeezerFormat enum). */
 const DEEZER_FLAC = 9
 const DEEZER_MP3_320 = 3
+const DEEZER_MP3_128 = 1
+
+/** Formats allowed at each level. Deezer's only lossless format is FLAC 16-bit/44.1 kHz. */
+const DEEZER_FORMATS: Record<QualityLevel, number[]> = {
+	max: [DEEZER_FLAC, DEEZER_MP3_320, DEEZER_MP3_128],
+	hires96: [DEEZER_FLAC, DEEZER_MP3_320, DEEZER_MP3_128],
+	cd: [DEEZER_FLAC, DEEZER_MP3_320, DEEZER_MP3_128],
+	mp3_320: [DEEZER_MP3_320, DEEZER_MP3_128],
+	mp3_128: [DEEZER_MP3_128]
+}
 
 /** Deezer: the quality depends on the account (HiFi → FLAC 16/44.1, Premium → MP3 320, free → MP3 128). */
 class DeezerDownloader extends LucidaDownloader {
-	constructor(private deezer: Deezer) {
+	constructor(
+		private deezer: Deezer,
+		private catalog: DeezerSource
+	) {
 		super('deezer', deezer)
+	}
+
+	/**
+	 * Tracks only, through the same web API the rest of the app uses. lucida's search also looks up artists and
+	 * albums on every call (three requests), and fails as a whole if any of them does.
+	 */
+	override async search(query: string, limit: number): Promise<TargetTrack[]> {
+		const tracks = await this.catalog.search(query, limit)
+		return tracks.map((t) =>
+			this.withQuality({
+				service: 'deezer',
+				id: t.sourceId,
+				url: t.url ?? `https://www.deezer.com/track/${t.sourceId}`,
+				title: t.title,
+				artists: t.artists,
+				album: t.album,
+				durationMs: t.durationMs,
+				isrc: t.isrc,
+				coverUrl: t.coverUrl
+			})
+		)
 	}
 
 	protected override quality(): AudioQuality {
@@ -181,6 +246,22 @@ class DeezerDownloader extends LucidaDownloader {
 	async accountQuality() {
 		return this.quality()
 	}
+
+	/**
+	 * lucida streams the best format in `availableFormats` (falling back to MP3 128) and reads the set synchronously,
+	 * before its first await. Narrowing the set only around the call applies the level to this download alone, not
+	 * to others running at the same time.
+	 */
+	protected override openStream(getStream: () => Promise<GetStreamResponse>, level: QualityLevel) {
+		const formats = this.deezer.availableFormats
+		const allowed = DEEZER_FORMATS[level]
+		this.deezer.availableFormats = new Set([...formats].filter((f) => allowed.includes(f)))
+		try {
+			return getStream()
+		} finally {
+			this.deezer.availableFormats = formats
+		}
+	}
 }
 
 export async function createQobuzDownloader(opts: { appId: string; appSecret: string; token: string }) {
@@ -191,7 +272,7 @@ export async function createDeezerDownloader(arl: string) {
 	const deezer = new Deezer({ arl })
 	// With an arl set, login() ignores the arguments and authenticates through the cookie.
 	await deezer.login('', '')
-	return new DeezerDownloader(deezer)
+	return new DeezerDownloader(deezer, new DeezerSource(arl))
 }
 
 function bestCover(...lists: (CoverArtwork[] | undefined)[]): string | undefined {

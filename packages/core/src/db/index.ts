@@ -100,7 +100,24 @@ const MIGRATIONS: string[] = [
 	ALTER TABLE files ADD COLUMN quality TEXT;
 	`,
 	// 4: the provider the user picked for a download (NULL: automatic, by service priority).
-	`ALTER TABLE downloads ADD COLUMN provider TEXT;`
+	`ALTER TABLE downloads ADD COLUMN provider TEXT;`,
+	// 5: the quality level each download asks for (NULL: the one in settings), and one file per track and level so
+	// a file is only reused for the quality it was downloaded in. Everything until now was downloaded at 'max'.
+	`
+	ALTER TABLE downloads ADD COLUMN quality_level TEXT;
+	CREATE TABLE files_new (
+		target_service TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		quality_level TEXT NOT NULL,
+		path TEXT NOT NULL,
+		quality TEXT,
+		PRIMARY KEY (target_service, target_id, quality_level)
+	);
+	INSERT INTO files_new (target_service, target_id, quality_level, path, quality)
+		SELECT target_service, target_id, 'max', path, quality FROM files;
+	DROP TABLE files;
+	ALTER TABLE files_new RENAME TO files;
+	`
 ]
 
 export function openDb(file: string): Db {

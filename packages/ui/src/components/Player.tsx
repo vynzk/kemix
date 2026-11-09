@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { SourceService, SourceTrack, TrackPreview } from '@kemix/core'
+import type { MatchCandidate, SourceService, SourceTrack, TrackPreview } from '@kemix/core'
 import { api } from '../lib/api'
 import { SERVICE_LABEL } from '../lib/format'
 import { Button } from './ui'
@@ -22,7 +22,17 @@ interface PlayerApi {
 	/** A search result from `service`: its own audio when possible, else looked up on YouTube. */
 	playSourceTrack(service: SourceService, track: SourceTrack): void
 	playVideo(video: { videoId: string; title: string; artists: string[] }): void
+	/**
+	 * A review candidate, to check it's the right version: that very recording (its service's audio, even a short
+	 * clip), falling back to YouTube only when the service has none. YouTube candidates are videos already.
+	 */
+	playCandidate(candidate: MatchCandidate): void
 	stop(): void
+}
+
+/** `playing.key` while `candidate` is the one playing. */
+export function candidateKey(c: Pick<MatchCandidate, 'service' | 'id'>): string {
+	return c.service === 'youtube' ? `video:${c.id}` : `candidate:${c.service}:${c.id}`
 }
 
 const PlayerContext = createContext<PlayerApi | null>(null)
@@ -81,10 +91,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 		})
 	}, [])
 
+	const playCandidate = useCallback(
+		(c: MatchCandidate) => {
+			if (c.service === 'youtube') return playVideo({ videoId: c.id, title: c.title, artists: c.artists })
+			const service = c.service
+			const track: SourceTrack = { sourceId: c.id, title: c.title, artists: c.artists, durationMs: c.durationMs }
+			lookUp(candidateKey(c), { title: c.title, artists: c.artists }, () => api.previewTrack(service, track, true))
+		},
+		[lookUp, playVideo]
+	)
+
 	const stop = useCallback(() => setPlaying(null), [])
 	const value = useMemo(
-		() => ({ playing, playTrack, playSourceTrack, playVideo, stop }),
-		[playing, playTrack, playSourceTrack, playVideo, stop]
+		() => ({ playing, playTrack, playSourceTrack, playVideo, playCandidate, stop }),
+		[playing, playTrack, playSourceTrack, playVideo, playCandidate, stop]
 	)
 	return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
 }
@@ -113,9 +133,30 @@ export function PlayerBar() {
 	const audio = useRef<HTMLAudioElement>(null)
 	const [time, setTime] = useState<Time>({ current: 0, duration: 0, paused: false })
 	const [seeking, setSeeking] = useState<number | null>(null)
+	const [volume, setVolume] = useState<number>(() => {
+		const saved = Number(localStorage.getItem('kemix.volume'))
+		return localStorage.getItem('kemix.volume') !== null && saved >= 0 && saved <= 1 ? saved : 1
+	})
+	const [muted, setMuted] = useState(false)
 	const media = playing?.state === 'ready' ? playing.media : undefined
 	const videoId = media?.kind === 'youtube' ? media.videoId : undefined
 	const streamUrl = media?.kind === 'stream' ? media.url : undefined
+	const effectiveVolume = muted ? 0 : volume
+	const volumeRef = useRef(effectiveVolume)
+	volumeRef.current = effectiveVolume
+
+	useEffect(() => {
+		localStorage.setItem('kemix.volume', String(volume))
+	}, [volume])
+
+	// Keep both players in sync with the volume (the audio element is re-created per track).
+	useEffect(() => {
+		if (audio.current) audio.current.volume = effectiveVolume
+		frame.current?.contentWindow?.postMessage(
+			JSON.stringify({ event: 'command', func: 'setVolume', args: [Math.round(effectiveVolume * 100)] }),
+			'*'
+		)
+	}, [effectiveVolume, streamUrl, videoId])
 
 	useEffect(() => {
 		setTime({ current: 0, duration: 0, paused: false })
@@ -135,6 +176,11 @@ export function PlayerBar() {
 			}
 			const info = msg.info
 			if (!info || (msg.event !== 'infoDelivery' && msg.event !== 'initialDelivery')) return
+			if (msg.event === 'initialDelivery')
+				frame.current?.contentWindow?.postMessage(
+					JSON.stringify({ event: 'command', func: 'setVolume', args: [Math.round(volumeRef.current * 100)] }),
+					'*'
+				)
 			setTime((t) => ({
 				current: info.currentTime ?? t.current,
 				duration: info.duration || t.duration,
@@ -211,7 +257,7 @@ export function PlayerBar() {
 					{playing.state === 'error' && <span className="text-red-300">{playing.error}</span>}
 					{media?.kind === 'youtube' && `YouTube: ${media.title}`}
 					{media?.kind === 'stream' &&
-						`${SERVICE_LABEL[media.service]}${media.full ? '' : ' · vista previa de 30 s (no está en YouTube)'}`}
+						`${SERVICE_LABEL[media.service]}${media.full ? '' : ` · vista previa de 30 s${playing.key.startsWith('candidate:') ? '' : ' (no está en YouTube)'}`}`}
 				</p>
 				{media && (
 					<div className="mt-1 flex items-center gap-2 text-[11px] text-muted tabular-nums">
@@ -238,6 +284,27 @@ export function PlayerBar() {
 							className="min-w-0 flex-1 accent-[var(--color-accent)]"
 						/>
 						<span className="w-9">{fmtTime(time.duration)}</span>
+						<button
+							type="button"
+							onClick={() => setMuted((m) => !m)}
+							title={effectiveVolume === 0 ? 'Activar sonido' : 'Silenciar'}
+							className="ml-2 w-5 shrink-0 text-center text-sm hover:text-zinc-100"
+						>
+							{effectiveVolume === 0 ? '🔇' : effectiveVolume < 0.5 ? '🔉' : '🔊'}
+						</button>
+						<input
+							type="range"
+							aria-label="Volumen"
+							min={0}
+							max={100}
+							step={1}
+							value={Math.round(effectiveVolume * 100)}
+							onChange={(e) => {
+								setVolume(Number(e.target.value) / 100)
+								setMuted(false)
+							}}
+							className="w-24 shrink-0 accent-[var(--color-accent)]"
+						/>
 					</div>
 				)}
 			</div>

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
+import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { DownloadStatus, MatchStatus, SourceService } from '@kemix/core'
 import { SERVICE_COLOR, SERVICE_LABEL, cx } from '../lib/format'
 
@@ -32,6 +32,15 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
 				'focus:border-accent/60 focus:outline-none',
 				className
 			)}
+		/>
+	)
+}
+
+export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+	return (
+		<select
+			{...props}
+			className={cx('max-w-full rounded-md border border-line bg-ink px-2 py-1.5 text-sm focus:border-accent/60 focus:outline-none', className)}
 		/>
 	)
 }
@@ -71,6 +80,54 @@ export function StatusPill({ status, title }: { status: DownloadStatus; title?: 
 		<span title={title} className={cx('rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap', s.cls)}>
 			{s.label}
 		</span>
+	)
+}
+
+/**
+ * Deletes a download. A finished one also deletes its file, so that asks for a second click.
+ * `onHover`: hidden until the surrounding `group` row is hovered (it stays visible while asking to confirm).
+ */
+export function RemoveDownloadButton({
+	status,
+	pending,
+	onRemove,
+	onHover
+}: {
+	status: DownloadStatus
+	pending: boolean
+	onRemove: () => void
+	onHover?: boolean
+}) {
+	const [confirming, setConfirming] = useState(false)
+	useEffect(() => {
+		if (!confirming) return
+		const t = setTimeout(() => setConfirming(false), 4000)
+		return () => clearTimeout(t)
+	}, [confirming])
+
+	const hasFile = status === 'done'
+	const title = hasFile
+		? 'Borra el archivo del disco y lo quita de la lista de descargas'
+		: ['queued', 'matching', 'downloading'].includes(status)
+			? 'Detiene la descarga y la quita de la lista'
+			: 'La quita de la lista de descargas'
+	return (
+		<button
+			title={title}
+			disabled={pending}
+			onClick={() => {
+				if (hasFile && !confirming) return setConfirming(true)
+				setConfirming(false)
+				onRemove()
+			}}
+			className={cx(
+				'rounded px-1.5 py-0.5 text-xs whitespace-nowrap transition-colors disabled:opacity-40',
+				confirming ? 'bg-red-950 font-medium text-red-300' : 'text-zinc-500 hover:bg-zinc-800 hover:text-red-300',
+				onHover && !confirming && !pending && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+			)}
+		>
+			{pending ? 'Eliminando…' : confirming ? '¿Borrar archivo?' : 'Eliminar'}
+		</button>
 	)
 }
 
@@ -117,17 +174,22 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 
 export function ErrorText({ error }: { error: unknown }) {
 	if (!error) return null
-	return <p className="text-sm whitespace-pre-wrap text-red-300">{error instanceof Error ? error.message : String(error)}</p>
+	// Errors often carry URLs or tokens with no spaces: let them wrap instead of widening the page.
+	return (
+		<p className="text-sm whitespace-pre-wrap wrap-anywhere text-red-300">
+			{error instanceof Error ? error.message : String(error)}
+		</p>
+	)
 }
 
 export function PageHeader({ title, actions, children }: { title: string; actions?: ReactNode; children?: ReactNode }) {
 	return (
 		<header className="flex flex-wrap items-end justify-between gap-4 border-b border-line px-8 pt-8 pb-5">
-			<div>
+			<div className="min-w-0">
 				<h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
 				{children && <div className="mt-1 text-sm text-muted">{children}</div>}
 			</div>
-			{actions && <div className="flex items-center gap-2">{actions}</div>}
+			{actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
 		</header>
 	)
 }

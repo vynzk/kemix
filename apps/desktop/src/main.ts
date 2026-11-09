@@ -215,8 +215,13 @@ function captureSpotifySession(interactive: boolean): Promise<SpotifyWebSession>
 			)
 			if (!(await waitFor(() => !!token, interactive ? Number.POSITIVE_INFINITY : 30_000))) return
 			if (interactive) {
-				// Signed in: read the rest without making the user watch the player navigate around.
-				win.hide()
+				// Signed in: read the rest without making the user watch the player navigate around. Don't hide() the
+				// window: once a shown window is hidden the player stops loading its library (libraryV3 never arrives).
+				// A transparent window that lets clicks through keeps rendering like a visible one.
+				win.setOpacity(0)
+				win.setIgnoreMouseEvents(true)
+				win.setFocusable(false)
+				win.getParentWindow()?.focus()
 				for (const [url, op] of SPOTIFY_TOUR) {
 					if (!ops[op]) await visit(url)
 					await waitFor(() => !!ops[op], 15_000)

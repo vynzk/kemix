@@ -7,6 +7,7 @@ import type {
 	MatchCandidate,
 	PlaylistDetail,
 	PlaylistSummary,
+	QualityLevel,
 	ReviewItem,
 	Settings,
 	SourceService,
@@ -55,13 +56,19 @@ export const api = {
 	library: () => request<{ folders: Folder[]; playlists: PlaylistSummary[] }>('GET', '/api/library'),
 	playlist: (id: number) => request<PlaylistDetail>('GET', `/api/playlists/${id}`),
 	resyncPlaylist: (id: number) => request('POST', `/api/playlists/${id}/sync`),
-	/** Without positions, queues the whole playlist. Without a provider, services are tried in priority order. */
-	downloadPlaylist: (id: number, positions?: number[], provider?: DownloadService | null) =>
-		request('POST', `/api/playlists/${id}/download`, { positions, provider }),
+	/**
+	 * Without positions, queues the whole playlist. Without a provider, services are tried in priority order.
+	 * Without a quality, the one in settings is used.
+	 */
+	downloadPlaylist: (id: number, positions?: number[], provider?: DownloadService | null, quality?: QualityLevel | null) =>
+		request('POST', `/api/playlists/${id}/download`, { positions, provider, quality }),
 	preview: (trackId: number) => request<{ preview: TrackPreview | null }>('GET', `/api/tracks/${trackId}/preview`),
-	/** YouTube video to listen to a track that isn't in the library (a search result from `service`). */
-	previewTrack: (service: SourceService, track: SourceTrack) =>
-		request<{ preview: TrackPreview | null }>('POST', `/api/preview/${service}`, track),
+	/**
+	 * Audio for a track that isn't in the library (a search result from `service`): the service's full song, else
+	 * YouTube. `exact`: that very recording, so the service's own clip beats a YouTube video of maybe another version.
+	 */
+	previewTrack: (service: SourceService, track: SourceTrack, exact = false) =>
+		request<{ preview: TrackPreview | null }>('POST', `/api/preview/${service}${exact ? '?exact=1' : ''}`, track),
 	movePlaylist: (id: number, folderId: number | null) => request('PATCH', `/api/playlists/${id}`, { folderId }),
 	search: (service: SourceService, query: string) => request<SourceTrack[]>('POST', `/api/search/${service}`, { query }),
 	createPlaylist: (service: SourceService, name: string, trackIds: string[]) =>
@@ -73,16 +80,19 @@ export const api = {
 	deleteFolder: (id: number) => request('DELETE', `/api/folders/${id}`),
 
 	review: () => request<ReviewItem[]>('GET', '/api/review'),
-	searchCandidates: (trackId: number, query?: string) =>
-		request<MatchCandidate[]>('POST', `/api/review/${trackId}/search`, { query }),
-	accept: (trackId: number, candidate: MatchCandidate) => request('POST', `/api/review/${trackId}/accept`, { candidate }),
+	/** Without a provider, searches every connected service in priority order. */
+	searchCandidates: (trackId: number, query?: string, provider?: DownloadService | null) =>
+		request<MatchCandidate[]>('POST', `/api/review/${trackId}/search`, { query, provider }),
+	/** With a provider other than the candidate's, that same recording is looked up there and downloaded from it. */
+	accept: (trackId: number, candidate: MatchCandidate, provider?: DownloadService | null) =>
+		request('POST', `/api/review/${trackId}/accept`, { candidate, provider }),
 	skip: (trackId: number) => request('POST', `/api/review/${trackId}/skip`),
-	youtubeCandidates: (trackId: number, query?: string) =>
-		request<MatchCandidate[]>('POST', `/api/review/${trackId}/youtube`, { query }),
 	downloadFromYouTube: (trackIds: number[]) =>
 		request<{ queued: number; notFound: number }>('POST', '/api/review/youtube', { trackIds }),
 
 	downloads: () => request<DownloadRow[]>('GET', '/api/downloads'),
 	retryFailed: () => request('POST', '/api/downloads/retry'),
-	clearFinished: () => request('POST', '/api/downloads/clear')
+	clearFinished: () => request('POST', '/api/downloads/clear'),
+	/** Stops it if running, deletes its file from disk and removes it from the list. */
+	removeDownload: (id: number) => request('DELETE', `/api/downloads/${id}`)
 }

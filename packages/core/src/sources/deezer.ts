@@ -1,5 +1,6 @@
 import type { SourceConnector } from './types'
 import type { AccountIdentity, SourcePlaylist, SourceTrack, StreamPreview } from '../types'
+import { queryParts, scoreMatch } from '../match/score'
 import { fetchJson } from '../util'
 
 const GW_LIGHT = 'https://www.deezer.com/ajax/gw-light.php'
@@ -169,6 +170,54 @@ export class DeezerSource implements SourceConnector {
 		})
 		return String(id)
 	}
+}
+
+interface DeezerPublicTrack {
+	id: number
+	title: string
+	isrc?: string
+	duration?: number
+	artist?: { name?: string }
+	album?: { title?: string }
+}
+
+/**
+ * The ISRC of a track, from Deezer's public catalog (no account needed). Lets tracks from sources without ISRCs
+ * (Spotify's web player, YouTube Music) be matched by ISRC on services whose text search misses them.
+ * Only answers when the catalog's track scores at least `minScore` against `track`.
+ */
+export async function findIsrcOnDeezer(
+	track: Pick<SourceTrack, 'title' | 'artists' | 'durationMs'>,
+	minScore: number
+): Promise<{ isrc: string; score: number } | null> {
+	const { artist, title, core } = queryParts(track)
+	const queries = [...new Set([`${artist} ${title}`.trim(), `${artist} ${core}`.trim()])]
+	let best: { track: DeezerPublicTrack; score: number } | null = null
+	for (const q of queries) {
+		const res = await fetchJson<{ data?: DeezerPublicTrack[] }>(
+			`https://api.deezer.com/search/track?${new URLSearchParams({ q, limit: '10' })}`
+		)
+		for (const t of res?.data ?? []) {
+			const score = scoreMatch(
+				{ ...track, isrc: undefined },
+				{
+					service: 'deezer',
+					id: String(t.id),
+					url: `https://www.deezer.com/track/${t.id}`,
+					title: t.title,
+					artists: t.artist?.name ? [t.artist.name] : [],
+					album: t.album?.title,
+					durationMs: t.duration ? t.duration * 1000 : undefined
+				}
+			)
+			if (!best || score > best.score) best = { track: t, score }
+		}
+		if (best && best.score >= minScore) break
+	}
+	if (!best || best.score < minScore) return null
+	const isrc =
+		best.track.isrc ?? (await fetchJson<{ isrc?: string }>(`https://api.deezer.com/track/${best.track.id}`))?.isrc
+	return isrc ? { isrc, score: best.score } : null
 }
 
 function toTrack(t: DeezerSongRaw): SourceTrack {

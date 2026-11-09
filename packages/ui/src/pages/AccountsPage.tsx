@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { AccountInfo, AudioQuality, DownloadService, SourceService, TargetService, YtMusicAccount } from '@kemix/core'
 import { api } from '../lib/api'
+import { useDownloadQualities } from '../lib/hooks'
 import { SERVICE_COLOR, SERVICE_LABEL, cx, qualityLabel, qualityTone } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
@@ -9,12 +10,7 @@ export function AccountsPage() {
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
 	const accounts = new Map(state.data?.accounts.map((a) => [a.service, a]))
 	const get = (s: SourceService): AccountInfo => accounts.get(s) ?? { service: s, status: 'disconnected' }
-	const connectedKey = (state.data?.accounts ?? []).map((a) => `${a.service}:${a.status}`).join(',')
-	const qualities = useQuery({
-		queryKey: ['account-quality', connectedKey],
-		queryFn: api.downloadQualities,
-		enabled: !!state.data
-	})
+	const qualities = useDownloadQualities()
 	const priority = state.data?.settings.servicePriority ?? []
 	const download = (service: TargetService) => (
 		<DownloadQuality
@@ -33,11 +29,11 @@ export function AccountsPage() {
 				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists;
 				YouTube además sirve de respaldo para descargar lo que no está en Qobuz ni Deezer.
 			</PageHeader>
-			<div className="grid gap-4 p-8 xl:grid-cols-2">
+			<div className="grid grid-cols-1 gap-4 p-8 xl:grid-cols-2">
 				<AccountCard account={get('qobuz')} role="Importar + descargar" download={download('qobuz')}>
 					<QobuzForm browserLogin={state.data?.browserLogin ?? false} />
 				</AccountCard>
-				<AccountCard account={get('deezer')} role="Importar + descargar" download={download('deezer')}>
+				<AccountCard account={get('deezer')} role="Importar + descargar" download={download('deezer')} beta>
 					<DeezerForm />
 				</AccountCard>
 				<AccountCard
@@ -67,6 +63,9 @@ export function AccountsPage() {
 				>
 					<YtMusicForm />
 				</AccountCard>
+				<ComingSoonCard name="SoundCloud" color="#ff5500" />
+				<ComingSoonCard name="Tidal" color="#e4e4e7" />
+				<ComingSoonCard name="Soundeo" color="#f5a623" />
 			</div>
 		</div>
 	)
@@ -122,15 +121,34 @@ function DownloadQuality(props: {
 	)
 }
 
+/** Placeholder for a service that isn't supported yet. */
+function ComingSoonCard({ name, color }: { name: string; color: string }) {
+	return (
+		<section className="rounded-xl border border-dashed border-line bg-panel/50 p-5 opacity-70">
+			<header className="flex items-start justify-between gap-4">
+				<h2 className="flex items-center gap-2 font-semibold">
+					<span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />
+					{name}
+				</h2>
+				<span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">Próximamente</span>
+			</header>
+			<p className="mt-3 text-xs text-muted">Todavía no se puede conectar. Llegará en una próxima versión.</p>
+		</section>
+	)
+}
+
 function AccountCard({
 	account,
 	role,
+	beta,
 	download,
 	connectedExtra,
 	children
 }: {
 	account: AccountInfo
 	role: string
+	/** Still in progress: shows a "Beta" badge next to the name. */
+	beta?: boolean
 	/** What this account can download, and at what quality. */
 	download?: ReactNode
 	/** Extra controls shown while connected (e.g. switching Google account). */
@@ -147,17 +165,22 @@ function AccountCard({
 	const showForm = !connected || editing
 
 	return (
-		<section className="rounded-xl border border-line bg-panel p-5">
+		<section className="min-w-0 rounded-xl border border-line bg-panel p-5">
 			<header className="flex items-start justify-between gap-4">
-				<div>
+				<div className="shrink-0">
 					<h2 className="flex items-center gap-2 font-semibold">
 						<span className="h-2.5 w-2.5 rounded-full" style={{ background: SERVICE_COLOR[account.service] }} />
 						{SERVICE_LABEL[account.service]}
+						{beta && (
+							<span className="rounded bg-violet-950 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-violet-300 uppercase">
+								Beta
+							</span>
+						)}
 					</h2>
 					<p className="mt-0.5 text-xs text-muted">{role}</p>
 				</div>
 				{connected ? (
-					<div className="text-right">
+					<div className="min-w-0 text-right wrap-anywhere">
 						<span className="rounded bg-emerald-950 px-2 py-0.5 text-xs text-emerald-300">
 							Conectado{account.displayName ? ` · ${account.displayName}` : ''}
 						</span>
@@ -177,7 +200,9 @@ function AccountCard({
 			</header>
 			{download && <div className="mt-3 border-t border-line/60 pt-3">{download}</div>}
 			{account.status === 'error' && account.error && (
-				<p className="mt-3 rounded-md bg-red-950/40 px-3 py-2 text-xs whitespace-pre-wrap text-red-300">{account.error}</p>
+				<p className="mt-3 rounded-md bg-red-950/40 px-3 py-2 text-xs whitespace-pre-wrap wrap-anywhere text-red-300">
+					{account.error}
+				</p>
 			)}
 			{connected && (
 				<div className="mt-4 flex gap-2">
@@ -228,8 +253,12 @@ function QobuzForm({ browserLogin }: { browserLogin: boolean }) {
 
 const COOKIES_EXTENSION_URL = 'https://github.com/kairi003/Get-cookies.txt-LOCALLY'
 
-/** Step-by-step guide to export cookies.txt from the browser and use it to connect. */
-function CookiesGuide({ site }: { site: string }) {
+/**
+ * Step-by-step guide to export cookies.txt from the browser and use it to connect.
+ * `rotating`: the site renews its session cookies while it stays open in the browser (Google), which kills the copy
+ * exported to Kemix within minutes or hours unless it's exported from a window that's closed right after.
+ */
+function CookiesGuide({ site, rotating }: { site: string; rotating?: boolean }) {
 	return (
 		<details className="rounded-md border border-line bg-ink/40 px-3 py-2 text-xs text-muted">
 			<summary className="cursor-pointer text-zinc-300 select-none">¿Cómo obtengo el archivo cookies.txt?</summary>
@@ -257,6 +286,13 @@ function CookiesGuide({ site }: { site: string }) {
 					pasos.
 				</li>
 			</ol>
+			{rotating && (
+				<p className="mt-2 rounded border border-amber-900/60 bg-amber-950/30 px-2 py-1.5 text-amber-200">
+					<b>Para que no caduquen enseguida:</b> Google renueva estas cookies mientras {site} sigue abierto en el
+					navegador, y la copia exportada deja de valer. Haz los pasos en una <b>ventana privada / de incógnito</b>{' '}
+					(permite la extensión en modo incógnito) y ciérrala justo después de exportar, <b>sin cerrar sesión</b>.
+				</p>
+			)}
 		</details>
 	)
 }
@@ -400,7 +436,7 @@ function SpotifyApiSteps({ redirectUri }: { redirectUri: string }) {
 				Crea una app en <span className="text-zinc-300">developer.spotify.com/dashboard</span> (tipo Web API).
 			</li>
 			<li>
-				Añade este Redirect URI: <code className="text-zinc-300 select-all">{redirectUri}</code>
+				Añade este Redirect URI: <code className="text-zinc-300 wrap-anywhere select-all">{redirectUri}</code>
 			</li>
 			<li>Copia el Client ID aquí y pulsa Conectar; se abrirá el navegador para autorizar.</li>
 		</ol>
@@ -449,7 +485,7 @@ function YtMusicForm() {
 					className="w-full rounded-md border border-line bg-ink px-3 py-1.5 font-mono text-xs focus:border-accent/60 focus:outline-none"
 				/>
 			</Field>
-			<CookiesGuide site="music.youtube.com" />
+			<CookiesGuide site="music.youtube.com" rotating />
 			<ErrorText error={connect.error} />
 			<div className="flex items-center gap-2">
 				<Button variant="primary" type="submit" disabled={connect.isPending || cookie.trim().length < 20}>

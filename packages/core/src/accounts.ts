@@ -2,12 +2,12 @@ import type { Db } from './db'
 import type { EventBus } from './events'
 import type { SecretStore } from './secrets'
 import type { SettingsStore } from './settings'
-import type { AccountInfo, AccountStatus, AudioQuality, DownloadService, SourceService, TargetService } from './types'
+import type { AccountInfo, AccountStatus, AudioQuality, DownloadService, SourceService, SourceTrack, TargetService } from './types'
 import { SOURCE_SERVICES } from './types'
 import type { SourceConnector } from './sources/types'
 import { QobuzApi, QobuzSource, scrapeQobuzAppCredentials, type QobuzCredentials } from './sources/qobuz'
 import { parseQobuzSession } from './sources/qobuz-session'
-import { DeezerGw, DeezerSource } from './sources/deezer'
+import { DeezerGw, DeezerSource, findIsrcOnDeezer } from './sources/deezer'
 import {
 	SpotifySource,
 	createSpotifyAuthRequest,
@@ -449,6 +449,11 @@ export class Accounts {
 			})
 		)
 		return out
+	}
+
+	/** A track's ISRC from Deezer's public catalog, for sources that don't give one. Needs no Deezer account. */
+	findIsrc(track: SourceTrack, minScore: number) {
+		return findIsrcOnDeezer(track, minScore)
 	}
 
 	downloader(service: DownloadService): Promise<Downloader> {

@@ -1,9 +1,19 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DownloadService, PlaylistTrackRow } from '@kemix/core'
+import type { DownloadService, PlaylistTrackRow, QualityLevel } from '@kemix/core'
 import { api } from '../lib/api'
-import { SERVICE_LABEL, cx, duration, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Cover, ErrorText, MatchLabel, ServiceDot, StatusPill } from '../components/ui'
+import { useDownloadProviders, useDownloadQualities } from '../lib/hooks'
+import {
+	QUALITY_LEVEL_OPTIONS,
+	SERVICE_LABEL,
+	cx,
+	duration,
+	fitQualityLevel,
+	providerQualityOptions,
+	qualityLabel,
+	qualityTone
+} from '../lib/format'
+import { Button, Cover, ErrorText, MatchLabel, RemoveDownloadButton, ServiceDot, StatusPill } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 
 export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => void }) {
@@ -16,22 +26,35 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 		qc.invalidateQueries({ queryKey: ['review'] })
 	}
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
-	// YouTube needs no account (only yt-dlp); Qobuz and Deezer only once connected.
-	const providers = useMemo<DownloadService[]>(() => {
-		const connected = new Set(state.data?.accounts.filter((a) => a.status === 'connected').map((a) => a.service))
-		return (['qobuz', 'deezer', 'youtube'] as const).filter((s) => s === 'youtube' || connected.has(s))
-	}, [state.data])
+	const providers = useDownloadProviders()
+	const accountQualities = useDownloadQualities().data
 	const [selected, setSelected] = useState<Set<number>>(new Set())
 	/** '' = automatic, following the priority set in Ajustes. */
 	const [provider, setProvider] = useState<DownloadService | ''>('')
+	/** null = not touched: the quality set in Ajustes. */
+	const [level, setLevel] = useState<QualityLevel | null>(null)
+	const wanted = level ?? state.data?.settings.downloadQuality ?? 'max'
+	/** With a provider picked, only what it (and the account on it) can give; the choice is kept for "Automático". */
+	const qualityFor = (s: DownloadService) => fitQualityLevel(s, wanted, accountQualities?.[s])
+	const quality = provider ? qualityFor(provider) : wanted
+	const qualityOptions: { value: QualityLevel; label: string }[] = provider
+		? providerQualityOptions(provider, accountQualities?.[provider]) : QUALITY_LEVEL_OPTIONS
 	const download = useMutation({
-		mutationFn: (positions?: number[]) => api.downloadPlaylist(id, positions, provider || null),
+		mutationFn: (positions?: number[]) => api.downloadPlaylist(id, positions, provider || null, quality),
 		onSuccess: () => setSelected(new Set()),
 		onSettled: invalidate
 	})
 	const resync = useMutation({ mutationFn: () => api.resyncPlaylist(id), onSettled: invalidate })
+	const remove = useMutation({
+		mutationFn: api.removeDownload,
+		onSettled: () => {
+			invalidate()
+			qc.invalidateQueries({ queryKey: ['downloads'] })
+		}
+	})
 	const retryWith = useMutation({
-		mutationFn: (v: { positions: number[]; provider: DownloadService }) => api.downloadPlaylist(id, v.positions, v.provider),
+		mutationFn: (v: { positions: number[]; provider: DownloadService }) =>
+			api.downloadPlaylist(id, v.positions, v.provider, qualityFor(v.provider)),
 		onSettled: invalidate
 	})
 
@@ -64,7 +87,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 			</div>
 			{playlist.isLoading && <p className="px-8 py-10 text-sm text-muted">Cargando temas…</p>}
 			<div className="px-8">
-				<ErrorText error={playlist.error ?? download.error ?? resync.error ?? retryWith.error} />
+				<ErrorText error={playlist.error ?? download.error ?? resync.error ?? retryWith.error ?? remove.error} />
 			</div>
 			{p && (
 				<>
@@ -102,6 +125,19 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 									<option key={s} value={s}>
 										{SERVICE_LABEL[s]}
 										{s === 'youtube' ? ' (con pérdida)' : ''}
+									</option>
+								))}
+							</select>
+							<select
+								value={quality}
+								onChange={(e) => setLevel(e.target.value as QualityLevel)}
+								disabled={qualityOptions.length < 2}
+								className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm disabled:opacity-60"
+								title={`${provider ? `Calidades que ofrece ${SERVICE_LABEL[provider]}${provider !== 'youtube' && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. No cambia los temas ya descargados.`}
+							>
+								{qualityOptions.map((o) => (
+									<option key={o.value} value={o.value}>
+										{o.label}
 									</option>
 								))}
 							</select>
@@ -152,11 +188,15 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								</th>
 								<th className="w-20 py-3 text-center font-medium">#</th>
 								<th className="py-3 font-medium">Tema</th>
-								<th className="py-3 font-medium">Álbum</th>
+								{/* Hidden on narrow windows so the fixed-width columns never push the table past the edge. */}
+								<th className="hidden py-3 font-medium xl:table-cell">Álbum</th>
 								<th className="py-3 font-medium">Fuente</th>
 								<th className="py-3 font-medium">Calidad</th>
 								<th className="py-3 font-medium">Estado</th>
-								<th className="py-3 pr-8 text-right font-medium">Dur.</th>
+								<th className="py-3 pr-4 text-right font-medium">Dur.</th>
+								<th className="w-32 py-3 pr-8">
+									<span className="sr-only">Eliminar descarga</span>
+								</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -189,9 +229,12 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 										</td>
 										<td className="max-w-0 py-2 pr-4">
 											<p className={cx('truncate', isPlaying && 'text-accent')}>{t.title}</p>
-											<p className="truncate text-xs text-muted">{t.artists.join(', ')}</p>
+											<p className="truncate text-xs text-muted">
+												{t.artists.join(', ')}
+												{t.album && <span className="xl:hidden"> · {t.album}</span>}
+											</p>
 										</td>
-										<td className="max-w-0 truncate py-2 pr-4 text-muted">{t.album}</td>
+										<td className="hidden max-w-0 truncate py-2 pr-4 text-muted xl:table-cell">{t.album}</td>
 										<td className="py-2 pr-4 whitespace-nowrap">
 											{t.match?.targetService ? (
 												<span className="text-xs">
@@ -212,7 +255,17 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 												<StatusPill status={t.download.status} title={t.download.error ?? t.download.path ?? undefined} />
 											)}
 										</td>
-										<td className="py-2 pr-8 text-right text-muted">{duration(t.durationMs)}</td>
+										<td className="py-2 pr-4 text-right text-muted">{duration(t.durationMs)}</td>
+										<td className="w-32 py-2 pr-8 text-right">
+											{t.download && (
+												<RemoveDownloadButton
+													onHover
+													status={t.download.status}
+													pending={remove.isPending && remove.variables === t.download.id}
+													onRemove={() => remove.mutate(t.download!.id)}
+												/>
+											)}
+										</td>
 									</tr>
 								)
 							})}
@@ -224,17 +277,22 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 	)
 }
 
-/** Downloaded quality when there's a file; otherwise the best the matched service offers. */
+/** Downloaded quality and the provider it came from when there's a file; otherwise the best the matched service offers. */
 function QualityCell({ track }: { track: PlaylistTrackRow }) {
 	const done = track.download?.status === 'done' ? track.download : null
-	if (done?.quality) {
+	if (done && (done.quality || done.service)) {
 		return (
 			<span
 				className={cx('text-xs font-medium', qualityTone(done.quality))}
-				title={`Descargado${done.service ? ` desde ${SERVICE_LABEL[done.service]}` : ''} en ${qualityLabel(done.quality)}`}
+				title={`Descargado${done.service ? ` desde ${SERVICE_LABEL[done.service]}` : ''}${done.quality ? ` en ${qualityLabel(done.quality)}` : ''}`}
 			>
 				{qualityLabel(done.quality)}
-				{done.service === 'youtube' && <span className="font-normal text-zinc-500"> · YouTube</span>}
+				{done.service && (
+					<span className="font-normal text-zinc-500">
+						{done.quality ? ' · ' : ''}
+						{SERVICE_LABEL[done.service]}
+					</span>
+				)}
 			</span>
 		)
 	}

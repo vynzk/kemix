@@ -122,7 +122,7 @@ export class QobuzApi {
 	async fileUrl(trackId: number | string, formatId: number, secret: string) {
 		const ts = Math.floor(Date.now() / 1000)
 		const sig = md5(`trackgetFileUrlformat_id${formatId}intentstreamtrack_id${trackId}${ts}${secret}`)
-		return this.get<{ url?: string; sample?: boolean }>('track/getFileUrl', {
+		return this.get<{ url?: string; sample?: boolean; mime_type?: string }>('track/getFileUrl', {
 			track_id: trackId,
 			format_id: formatId,
 			intent: 'stream',

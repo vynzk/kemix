@@ -23,6 +23,9 @@ export class HttpError extends Error {
 	}
 }
 
+/** The service no longer accepts the stored session (expired or revoked cookies/token): the user has to reconnect. */
+export class SessionExpiredError extends Error {}
+
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Pick the largest image from a list of {url,width}. */
