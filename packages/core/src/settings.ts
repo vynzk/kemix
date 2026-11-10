@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import type { Db } from './db'
-import { DOWNLOAD_SERVICES, isQualityLevel, type Settings } from './types'
+import { DOWNLOAD_SERVICES, isOutputFormat, isQualityLevel, type Settings } from './types'
 
 export const DEFAULT_PORT = 47800
 
@@ -10,6 +10,7 @@ export function defaultSettings(): Settings {
 		downloadDir: path.join(os.homedir(), 'Music', 'Kemix'),
 		servicePriority: ['qobuz', 'deezer'],
 		downloadQuality: 'max',
+		outputFormat: 'original',
 		concurrency: 3,
 		autoAcceptThreshold: 0.9,
 		spotifyClientId: '',
@@ -46,6 +47,7 @@ function sanitize(s: Settings): Settings {
 		downloadDir: s.downloadDir.trim() || defaultSettings().downloadDir,
 		servicePriority: priority.length ? [...new Set(priority)] : defaultSettings().servicePriority,
 		downloadQuality: isQualityLevel(s.downloadQuality) ? s.downloadQuality : defaultSettings().downloadQuality,
+		outputFormat: isOutputFormat(s.outputFormat) ? s.outputFormat : defaultSettings().outputFormat,
 		concurrency: clamp(Math.round(s.concurrency), 1, 8),
 		autoAcceptThreshold: clamp(s.autoAcceptThreshold, 0.5, 1),
 		spotifyClientId: s.spotifyClientId.trim(),

@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { ByteVector, File, Picture, PictureType } from 'node-taglib-sharp'
+import { ByteVector, File, Picture, PictureType, TagTypes, WaveFileSettings } from 'node-taglib-sharp'
 import type { TargetTrack } from '../types'
+
+// WAV files get an ID3v2 chunk (what DJ software reads, with the cover) and a RIFF INFO list, not the video-oriented
+// DivX/MovieID tags taglib would also add by default.
+WaveFileSettings.defaultTagTypes = TagTypes.Id3v2 | TagTypes.RiffInfo
 
 export async function fetchCover(url: string | undefined): Promise<Buffer | undefined> {
 	if (!url) return undefined
@@ -37,6 +41,23 @@ export function writeTags(filePath: string, meta: TargetTrack, cover?: Buffer) {
 		file.save()
 	} finally {
 		file.dispose()
+	}
+}
+
+/** Copy tags and cover art from one audio file to another (a file converted from an earlier download). */
+export function copyTags(fromPath: string, toPath: string) {
+	const from = File.createFromPath(fromPath)
+	try {
+		const to = File.createFromPath(toPath)
+		try {
+			from.tag.copyTo(to.tag, true)
+			to.tag.pictures = from.tag.pictures
+			to.save()
+		} finally {
+			to.dispose()
+		}
+	} finally {
+		from.dispose()
 	}
 }
 

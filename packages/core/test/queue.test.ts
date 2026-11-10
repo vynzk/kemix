@@ -42,6 +42,8 @@ class FakeDownloader implements Downloader {
 	downloads = 0
 	/** Quality level each download asked for, in order. */
 	levels: QualityLevel[] = []
+	/** What the "service" sends. */
+	mimeType = 'audio/mpeg'
 	async isrcLookup(isrc: string) {
 		return catalog.find((t) => t.isrc === isrc) ?? null
 	}
@@ -56,7 +58,7 @@ class FakeDownloader implements Downloader {
 			open: async (level: QualityLevel) => {
 				this.downloads++
 				this.levels.push(level)
-				return { stream: Readable.from([Buffer.from('fake-audio-'), Buffer.from(meta.id)]), mimeType: 'audio/mpeg', sizeBytes: 13 }
+				return { stream: Readable.from([Buffer.from('fake-audio-'), Buffer.from(meta.id)]), mimeType: this.mimeType, sizeBytes: 13 }
 			}
 		}
 	}
@@ -106,23 +108,34 @@ class FakeSource implements SourceConnector {
 }
 
 /** Stands in for ffmpeg: writes a marker plus the input, and records each conversion. */
-class FakeMp3 {
+class FakeConverter {
+	/** MP3 conversions. */
 	calls: { input: string; lossless: boolean }[] = []
+	/** AIFF/WAV conversions. */
+	pcm: { input: string; format: string; bitDepth: number }[] = []
+	/** Makes every conversion fail. */
+	fail = false
 	async toMp3(input: string, output: string, opts: { lossless: boolean }) {
 		this.calls.push({ input: path.basename(input), lossless: opts.lossless })
+		if (this.fail) throw new Error('No se pudo convertir a MP3: prueba')
 		fs.writeFileSync(output, Buffer.concat([Buffer.from('mp3:'), fs.readFileSync(input)]))
+	}
+	async toPcm(input: string, output: string, opts: { format: string; bitDepth: number }) {
+		this.pcm.push({ input: path.basename(input), format: opts.format, bitDepth: opts.bitDepth })
+		if (this.fail) throw new Error(`No se pudo convertir a ${opts.format.toUpperCase()}: prueba`)
+		fs.writeFileSync(output, Buffer.concat([Buffer.from(`${opts.format}:`), fs.readFileSync(input)]))
 	}
 }
 
 let dir: string
 let kemix: Kemix
 let downloader: FakeDownloader
-let mp3: FakeMp3
+let converter: FakeConverter
 
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kemix-test-'))
-	mp3 = new FakeMp3()
-	kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test'), mp3 })
+	converter = new FakeConverter()
+	kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test'), converter })
 	kemix.settings.update({ downloadDir: path.join(dir, 'music') })
 	downloader = new FakeDownloader()
 	const source = new FakeSource()
@@ -419,7 +432,7 @@ describe('library + download queue', () => {
 		await kemix.queue.enqueuePlaylist(playlist!.id, [0], null, 'mp3_compat')
 		await settle(kemix)
 		expect(downloader.levels).toEqual(['mp3_compat'])
-		expect(mp3.calls).toEqual([])
+		expect(converter.calls).toEqual([])
 
 		// A FLAC (or YouTube's AAC) is converted: an .mp3 is left, and nothing of the original.
 		Object.assign(downloader, {
@@ -430,7 +443,7 @@ describe('library + download queue', () => {
 		})
 		await kemix.queue.enqueuePlaylist(playlist!.id, [1], null, 'mp3_compat')
 		await settle(kemix)
-		expect(mp3.calls).toEqual([{ input: '02 - Beta - Two.mp3.download', lossless: true }])
+		expect(converter.calls).toEqual([{ input: '02 - Beta - Two.mp3.download.flac', lossless: true }])
 		const folder = path.join(dir, 'music', 'Mi Playlist_ Favoritas_')
 		const files = fs.readdirSync(folder).filter((f) => !f.endsWith('.m3u8')).sort()
 		expect(files).toEqual(['01 - Alpha - One.mp3', '02 - Beta - Two.mp3'])
@@ -441,14 +454,76 @@ describe('library + download queue', () => {
 		await kemix.queue.enqueuePlaylist(flac.playlistId!, undefined, null, 'max')
 		await settle(kemix)
 		expect((await kemix.library.getPlaylist(flac.playlistId!)).tracks[0]!.download?.path).toMatch(/\.flac$/)
-		expect(mp3.calls).toHaveLength(1)
+		expect(converter.calls).toHaveLength(1)
 
 		// The MP3 already there is reused for "MP3 compatible", not the FLAC.
 		const again = await kemix.library.createPlaylist('spotify', 'Compatible', ['s1'])
 		await kemix.queue.enqueuePlaylist(again.playlistId!, undefined, null, 'mp3_compat')
 		await settle(kemix)
 		expect((await kemix.library.getPlaylist(again.playlistId!)).tracks[0]!.download?.path).toMatch(/\.mp3$/)
-		expect(mp3.calls).toHaveLength(1)
+		expect(converter.calls).toHaveLength(1)
+	})
+
+	it('converts downloads to AIFF/WAV, and reuses or converts files it already has', async () => {
+		downloader.mimeType = 'audio/flac'
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0], null, 'max', 'aiff')
+		await settle(kemix)
+		const folder = path.join(dir, 'music', 'Mi Playlist_ Favoritas_')
+		// Only the converted file is left: neither the FLAC it came from nor temporary files.
+		expect(fs.readdirSync(folder).filter((f) => !f.endsWith('.m3u8'))).toEqual(['01 - Alpha - One.aiff'])
+		expect(fs.readFileSync(path.join(folder, '01 - Alpha - One.aiff'), 'utf8')).toBe('aiff:fake-audio-q1')
+		// Its quality couldn't be read (it isn't real audio): 24-bit, so nothing is lost.
+		expect(converter.pcm).toEqual([{ input: '01 - Alpha - One.aiff.download.flac', format: 'aiff', bitDepth: 24 }])
+		expect(fs.readFileSync(path.join(folder, 'Mi Playlist_ Favoritas_.m3u8'), 'utf8')).toContain('01 - Alpha - One.aiff')
+
+		// Same track and format elsewhere: reused as is.
+		const again = await kemix.library.createPlaylist('spotify', 'Otra vez AIFF', ['s1'])
+		await kemix.queue.enqueuePlaylist(again.playlistId!, undefined, null, 'max', 'aiff')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(1)
+		expect(converter.pcm).toHaveLength(1)
+
+		// Without converting it's downloaded again (the AIFF isn't the FLAC)…
+		const flac = await kemix.library.createPlaylist('spotify', 'En FLAC', ['s1'])
+		await kemix.queue.enqueuePlaylist(flac.playlistId!, undefined, null, 'max', 'original')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(2)
+		const flacPath = (await kemix.library.getPlaylist(flac.playlistId!)).tracks[0]!.download!.path!
+		expect(flacPath).toMatch(/One\.flac$/)
+
+		// …and that FLAC is converted to WAV for the next playlist, without downloading again.
+		const wav = await kemix.library.createPlaylist('spotify', 'En WAV', ['s1'])
+		await kemix.queue.enqueuePlaylist(wav.playlistId!, undefined, null, 'max', 'wav')
+		await settle(kemix)
+		expect(downloader.downloads).toBe(2)
+		expect(converter.pcm.map((c) => `${c.input}>${c.format}`)).toEqual([
+			'01 - Alpha - One.aiff.download.flac>aiff',
+			`${path.basename(flacPath)}>wav`
+		])
+		const wavPath = (await kemix.library.getPlaylist(wav.playlistId!)).tracks[0]!.download!.path!
+		expect(fs.readFileSync(wavPath, 'utf8')).toBe('wav:fake-audio-q1')
+
+		// The format from settings applies when none is picked.
+		kemix.settings.update({ outputFormat: 'wav' })
+		const fromSettings = await kemix.library.createPlaylist('spotify', 'Por defecto', ['s2'])
+		await kemix.queue.enqueuePlaylist(fromSettings.playlistId!)
+		await settle(kemix)
+		expect((await kemix.library.getPlaylist(fromSettings.playlistId!)).tracks[0]!.download?.path).toMatch(/Two\.wav$/)
+		expect(converter.calls).toEqual([])
+	})
+
+	it('fails a download whose conversion fails, leaving nothing behind', async () => {
+		converter.fail = true
+		downloader.mimeType = 'audio/flac'
+		await kemix.library.syncAll()
+		const [playlist] = kemix.library.listPlaylists()
+		await kemix.queue.enqueuePlaylist(playlist!.id, [0], null, null, 'aiff')
+		await settle(kemix)
+		const row = (await kemix.library.getPlaylist(playlist!.id)).tracks[0]!.download!
+		expect(row).toMatchObject({ status: 'error', error: 'No se pudo convertir a AIFF: prueba' })
+		expect(fs.readdirSync(path.join(dir, 'music', 'Mi Playlist_ Favoritas_'))).toEqual([])
 	})
 
 	it('marks tracks as not downloaded when their file was deleted from disk', async () => {

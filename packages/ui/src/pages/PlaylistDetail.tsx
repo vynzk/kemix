@@ -1,20 +1,30 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { AudioQuality, DownloadService, PlaylistTrackRow, QualityLevel, ScanState } from '@kemix/core'
+import type { AudioQuality, DownloadService, PlaylistTrackRow, ScanState } from '@kemix/core'
 import { api } from '../lib/api'
 import { useDownloadProviders, useDownloadQualities } from '../lib/hooks'
 import {
-	QUALITY_LEVEL_OPTIONS,
 	SERVICE_LABEL,
+	TARGET_LABEL,
+	belowTarget,
+	belowTargetShort,
+	conversionTarget,
 	cx,
 	duration,
 	expectedQuality,
-	fitQualityLevel,
+	findPreset,
+	fitPreset,
+	groupPresets,
 	isLossy,
-	providerQualityOptions,
+	outputQuality,
+	presetKey,
+	presetOptions,
+	qualityDetail,
 	qualityLabel,
 	qualityTier,
 	qualityTone,
+	type ConversionTarget,
+	type DownloadPreset,
 	type QualityTier
 } from '../lib/format'
 import { Button, Cover, ErrorText, MatchLabel, RemoveDownloadButton, ServiceDot, StatusPill } from '../components/ui'
@@ -35,16 +45,18 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 	const [selected, setSelected] = useState<Set<number>>(new Set())
 	/** '' = automatic, following the priority set in Ajustes. */
 	const [provider, setProvider] = useState<DownloadService | ''>('')
-	/** null = not touched: the quality set in Ajustes. */
-	const [level, setLevel] = useState<QualityLevel | null>(null)
-	const wanted = level ?? state.data?.settings.downloadQuality ?? 'max'
+	/** null = not touched: the quality and format set in Ajustes. */
+	const [presetPick, setPresetPick] = useState<DownloadPreset | null>(null)
+	const settings = state.data?.settings
+	const wanted = presetPick ?? findPreset(settings?.downloadQuality ?? 'max', settings?.outputFormat ?? 'original')
 	/** With a provider picked, only what it (and the account on it) can give; the choice is kept for "Automático". */
-	const qualityFor = (s: DownloadService) => fitQualityLevel(s, wanted, accountQualities?.[s])
-	const quality = provider ? qualityFor(provider) : wanted
-	const qualityOptions: { value: QualityLevel; label: string }[] = provider
-		? providerQualityOptions(provider, accountQualities?.[provider]) : QUALITY_LEVEL_OPTIONS
+	const presetFor = (s: DownloadService) => fitPreset(s, wanted, accountQualities?.[s])
+	const preset = provider ? presetFor(provider) : wanted
+	const options = presetOptions(provider || undefined, provider ? accountQualities?.[provider] : undefined)
+	const target = conversionTarget(preset.level, preset.format)
 	const download = useMutation({
-		mutationFn: (positions?: number[]) => api.downloadPlaylist(id, positions, provider || null, quality),
+		mutationFn: (positions?: number[]) =>
+			api.downloadPlaylist(id, { positions, provider: provider || null, quality: preset.level, format: preset.format }),
 		onSuccess: () => setSelected(new Set()),
 		onSettled: invalidate
 	})
@@ -55,12 +67,17 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 	})
 	const scanRun = scanState.data?.scan?.running ? scanState.data.scan : null
 	const scanning = scan.isPending || !!scanRun
-	/** What each track would come out in, given the provider and quality picked (null: not looked up yet). */
+	/** What each track would be downloaded in, given the provider and quality picked (null: not looked up yet). */
 	const expected = (t: PlaylistTrackRow): AudioQuality | null => {
 		const max = t.match?.maxQuality
 		const service = t.match?.targetService
 		if (!max || !service) return null
-		return expectedQuality(max, service, provider ? quality : wanted, accountQualities?.[service])
+		return expectedQuality(max, service, preset.level, accountQualities?.[service])
+	}
+	/** Not downloaded yet, and what there is to download falls short of the conversion picked. */
+	const warned = (t: PlaylistTrackRow) => {
+		const q = t.download?.status === 'done' ? null : expected(t)
+		return !!q && belowTarget(target, q)
 	}
 	const resync = useMutation({ mutationFn: () => api.resyncPlaylist(id), onSettled: invalidate })
 	const remove = useMutation({
@@ -71,8 +88,10 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 		}
 	})
 	const retryWith = useMutation({
-		mutationFn: (v: { positions: number[]; provider: DownloadService }) =>
-			api.downloadPlaylist(id, v.positions, v.provider, qualityFor(v.provider)),
+		mutationFn: (v: { positions: number[]; provider: DownloadService }) => {
+			const p = presetFor(v.provider)
+			return api.downloadPlaylist(id, { positions: v.positions, provider: v.provider, quality: p.level, format: p.format })
+		},
 		onSettled: invalidate
 	})
 
@@ -130,37 +149,44 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								)}
 							</p>
 						</div>
-						<div className="flex flex-wrap gap-2">
+						<div className="flex flex-wrap items-end gap-2">
 							<Button onClick={() => resync.mutate()} disabled={resync.isPending}>
 								{resync.isPending ? 'Actualizando…' : 'Volver a leer'}
 							</Button>
-							<select
-								value={provider}
-								onChange={(e) => setProvider(e.target.value as DownloadService | '')}
-								className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
-								title="Proveedor desde el que descargar"
-							>
-								<option value="">Automático (prioridad)</option>
-								{providers.map((s) => (
-									<option key={s} value={s}>
-										{SERVICE_LABEL[s]}
-										{isLossy(s) ? ' (con pérdida)' : ''}
-									</option>
-								))}
-							</select>
-							<select
-								value={quality}
-								onChange={(e) => setLevel(e.target.value as QualityLevel)}
-								disabled={qualityOptions.length < 2}
-								className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm disabled:opacity-60"
-								title={`${provider ? `Calidades que ofrece ${SERVICE_LABEL[provider]}${!isLossy(provider) && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. No cambia los temas ya descargados.`}
-							>
-								{qualityOptions.map((o) => (
-									<option key={o.value} value={o.value}>
-										{o.label}
-									</option>
-								))}
-							</select>
+							<Control label="Descargar desde">
+								<select
+									value={provider}
+									onChange={(e) => setProvider(e.target.value as DownloadService | '')}
+									className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
+									title="Servicio del que se bajan los temas. Automático: el primero que lo tenga, en el orden de Ajustes."
+								>
+									<option value="">Automático</option>
+									{providers.map((s) => (
+										<option key={s} value={s}>
+											{SERVICE_LABEL[s]}
+											{isLossy(s) ? ' (con pérdida)' : ''}
+										</option>
+									))}
+								</select>
+							</Control>
+							<Control label="Calidad y formato">
+								<select
+									value={presetKey(preset)}
+									onChange={(e) => setPresetPick(options.find((o) => presetKey(o) === e.target.value) ?? null)}
+									className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
+									title={`${provider ? `Lo que da ${SERVICE_LABEL[provider]}${!isLossy(provider) && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Calidad máxima a bajar y formato del archivo. Si un tema no llega a esa calidad, se baja en la mejor que tenga. AIFF, WAV y MP3 se convierten al terminar de bajar, con tags y carátula. No cambia los temas ya descargados.`}
+								>
+									{groupPresets(options).map(([group, list]) => (
+										<optgroup key={group} label={group}>
+											{list.map((o) => (
+												<option key={presetKey(o)} value={presetKey(o)}>
+													{o.label}
+												</option>
+											))}
+										</optgroup>
+									))}
+								</select>
+							</Control>
 							<Button
 								onClick={() => scan.mutate(selected.size > 0 ? [...selected] : undefined)}
 								disabled={scanning}
@@ -189,6 +215,8 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 							scan={scanState.data.scan}
 							tracks={tracks}
 							expected={expected}
+							target={target}
+							warned={warned}
 							onSelect={(positions) => setSelected(new Set(positions))}
 						/>
 					)}
@@ -245,7 +273,11 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								return (
 									<tr
 										key={t.position}
-										className={cx('group border-t border-line/60 hover:bg-panel', selected.has(t.position) && 'bg-panel')}
+										className={cx(
+											'group border-t border-line/60 hover:bg-panel',
+											selected.has(t.position) && 'bg-panel',
+											warned(t) && 'bg-amber-950/25'
+										)}
 									>
 										<td className="py-2 pl-8">
 											<input
@@ -288,7 +320,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 											)}
 										</td>
 										<td className="py-2 pr-4 whitespace-nowrap">
-											<QualityCell track={t} expected={expected(t)} />
+											<QualityCell track={t} expected={expected(t)} format={preset.format} target={target} />
 										</td>
 										<td className="py-2 pr-4">
 											{t.download && (
@@ -318,16 +350,23 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 }
 
 /**
- * Downloaded quality and the provider it came from when there's a file; otherwise the best the matched service
- * offers, and what the download would come out in when the quality picked or the account caps it.
+ * Downloaded quality and the provider it came from when there's a file. Otherwise the best the matched service
+ * offers, what the download would come out in when the quality picked or the account caps it, the format it's
+ * converted to, and a short warning when what there is falls short of that conversion.
  */
-function QualityCell({ track, expected }: { track: PlaylistTrackRow; expected: AudioQuality | null }) {
+function QualityCell(props: {
+	track: PlaylistTrackRow
+	expected: AudioQuality | null
+	format: DownloadPreset['format']
+	target: ConversionTarget | null
+}) {
+	const { track, expected, format, target } = props
 	const done = track.download?.status === 'done' ? track.download : null
 	if (done && (done.quality || done.service)) {
 		return (
 			<span
 				className={cx('text-xs font-medium', qualityTone(done.quality))}
-				title={`Descargado${done.service ? ` desde ${SERVICE_LABEL[done.service]}` : ''}${done.quality ? ` en ${qualityLabel(done.quality)}` : ''}`}
+				title={`Descargado${done.service ? ` desde ${SERVICE_LABEL[done.service]}` : ''}${done.quality ? ` en ${qualityDetail(done.quality)}` : ''}`}
 			>
 				{qualityLabel(done.quality)}
 				{done.service && (
@@ -340,31 +379,53 @@ function QualityCell({ track, expected }: { track: PlaylistTrackRow; expected: A
 		)
 	}
 	const max = track.match?.maxQuality
-	const capped = max && expected && qualityLabel(expected) !== qualityLabel(max) ? expected : null
-	if (max && capped) {
-		return (
-			<span
-				className="text-xs text-muted"
-				title={`El tema está hasta en ${qualityLabel(max)}; con la calidad elegida y tu cuenta se bajaría en ${qualityLabel(capped)}`}
-			>
-				<span className={qualityTone(capped)}>{qualityLabel(capped)}</span>
-				<span className="text-zinc-500"> (máx. {qualityLabel(max)})</span>
-			</span>
-		)
-	}
-	if (max) {
-		return (
-			<span className="text-xs text-muted" title="Máxima calidad disponible para descargar">
-				máx. <span className={qualityTone(max)}>{qualityLabel(max)}</span>
-			</span>
-		)
-	}
-	return <span className="text-xs text-zinc-600">–</span>
+	if (!max) return <span className="text-xs text-zinc-600">–</span>
+	const capped = expected && qualityLabel(expected) !== qualityLabel(max) ? expected : null
+	const output = outputQuality(format, expected ?? max)
+	const warn = !!expected && !!target && belowTarget(target, expected)
+	return (
+		<div className="text-xs text-muted">
+			{capped ? (
+				<span
+					title={`El tema está hasta en ${qualityLabel(max)}; con la calidad elegida y tu cuenta se bajaría en ${qualityLabel(capped)}`}
+				>
+					<span className={qualityTone(capped)}>{qualityLabel(capped)}</span>
+					<span className="text-zinc-500"> (máx. {qualityLabel(max)})</span>
+				</span>
+			) : (
+				<span title="Máxima calidad disponible para descargar">
+					máx. <span className={qualityTone(max)}>{qualityLabel(max)}</span>
+				</span>
+			)}
+			{format !== 'original' && (
+				<span className="text-zinc-500" title={qualityDetail(output)}>
+					{' → '}
+					<span className={qualityTone(output)}>{TARGET_LABEL[format]}</span>
+				</span>
+			)}
+			{warn && target && (
+				<p className="font-medium text-amber-300" title={`Convertirlo a ${TARGET_LABEL[target]} no mejora la calidad de la fuente`}>
+					⚠ {belowTargetShort(target)}
+				</p>
+			)}
+		</div>
+	)
 }
 
-type ScanGroup = QualityTier | 'pending' | 'notfound' | 'unknown' | 'done'
+/** A caption over a header control, so it's clear what each selector is for. */
+function Control({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<label className="flex flex-col gap-1">
+			<span className="text-[11px] font-medium tracking-wide text-muted uppercase">{label}</span>
+			{children}
+		</label>
+	)
+}
+
+type ScanGroup = 'below' | QualityTier | 'pending' | 'notfound' | 'unknown' | 'done'
 
 const SCAN_GROUPS: { key: ScanGroup; label: string; cls: string }[] = [
+	{ key: 'below', label: '⚠ Con aviso', cls: 'font-medium text-amber-300' },
 	{ key: 'hires', label: 'Hi-Res', cls: 'text-sky-300' },
 	{ key: 'cd', label: 'Calidad CD', cls: 'text-emerald-300' },
 	{ key: 'lossy', label: 'Con pérdida', cls: 'text-amber-300' },
@@ -374,27 +435,35 @@ const SCAN_GROUPS: { key: ScanGroup; label: string; cls: string }[] = [
 	{ key: 'done', label: 'Ya descargados', cls: 'text-muted' }
 ]
 
-function scanGroup(t: PlaylistTrackRow, expected: AudioQuality | null): ScanGroup {
+function scanGroup(t: PlaylistTrackRow, expected: AudioQuality | null, warned: boolean): ScanGroup {
 	if (t.download?.status === 'done') return 'done'
+	if (warned) return 'below'
 	if (expected) return qualityTier(expected)
 	if (t.match?.status === 'pending') return 'pending'
 	if (t.match?.status === 'notfound') return 'notfound'
 	return 'unknown'
 }
 
-/** Scan progress and, per quality, how many tracks would come out in it; each count selects those tracks. */
+/**
+ * Scan progress and, per quality, how many tracks would come out in it; each count selects those tracks. Tracks
+ * whose audio falls short of the conversion picked get their own group, and can be left out of the selection.
+ */
 function ScanSummary(props: {
 	scan: ScanState
 	tracks: PlaylistTrackRow[]
 	expected: (t: PlaylistTrackRow) => AudioQuality | null
+	target: ConversionTarget | null
+	warned: (t: PlaylistTrackRow) => boolean
 	onSelect: (positions: number[]) => void
 }) {
-	const { scan } = props
+	const { scan, target } = props
 	const groups = new Map<ScanGroup, number[]>()
 	for (const t of props.tracks) {
-		const g = scanGroup(t, props.expected(t))
+		const g = scanGroup(t, props.expected(t), props.warned(t))
 		groups.set(g, [...(groups.get(g) ?? []), t.position])
 	}
+	const ready = (['hires', 'cd', 'lossy'] as const).flatMap((g) => groups.get(g) ?? [])
+	const warnedCount = groups.get('below')?.length ?? 0
 	return (
 		<div className="mx-8 mt-4 space-y-2 rounded-md border border-line bg-panel px-4 py-2.5 text-sm">
 			<p className="text-muted">
@@ -409,7 +478,7 @@ function ScanSummary(props: {
 						{scan.failed} no se pudieron buscar{scan.error ? ` (${scan.error})` : ''}.
 					</span>
 				)}
-				{!scan.running && ' Calidad en que se descargarían con el proveedor y la calidad elegidos (clic para seleccionarlos):'}
+				{!scan.running && ' En qué calidad se descargarían (clic para seleccionarlos):'}
 			</p>
 			{scan.running && (
 				<div className="h-1 overflow-hidden rounded bg-line">
@@ -419,7 +488,7 @@ function ScanSummary(props: {
 					/>
 				</div>
 			)}
-			<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+			<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
 				{SCAN_GROUPS.filter((g) => groups.get(g.key)?.length).map((g) =>
 					g.key === 'done' ? (
 						<span key={g.key} className={g.cls}>
@@ -429,12 +498,21 @@ function ScanSummary(props: {
 						<button
 							key={g.key}
 							className={cx(g.cls, 'hover:underline')}
-							title="Seleccionar estos temas"
+							title={
+								g.key === 'below' && target
+									? `Lo que hay para bajar es de menor calidad que ${TARGET_LABEL[target]}. Clic para seleccionarlos.`
+									: 'Seleccionar estos temas'
+							}
 							onClick={() => props.onSelect(groups.get(g.key)!)}
 						>
-							{g.label}: {groups.get(g.key)!.length}
+							{g.key === 'below' && target ? `⚠ ${belowTargetShort(target)}` : g.label}: {groups.get(g.key)!.length}
 						</button>
 					)
+				)}
+				{warnedCount > 0 && ready.length > 0 && (
+					<button className="text-zinc-300 underline-offset-2 hover:underline" onClick={() => props.onSelect(ready)}>
+						Seleccionar sin los con aviso ({ready.length})
+					</button>
 				)}
 			</div>
 		</div>

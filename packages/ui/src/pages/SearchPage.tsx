@@ -12,7 +12,11 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 	const qc = useQueryClient()
 	const player = usePlayer()
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
-	const services = (state.data?.accounts ?? []).filter((a) => a.status === 'connected').map((a) => a.service)
+	// Catalogs to search and create playlists in: Soundeo only downloads, it has no playlists.
+	const services = (state.data?.accounts ?? [])
+		.filter((a) => a.status === 'connected')
+		.map((a) => a.service)
+		.filter((s): s is SourceService => s !== 'soundeo')
 
 	const [picked, setPicked] = useState<SourceService | null>(null)
 	const service = picked && services.includes(picked) ? picked : (services[0] ?? null)

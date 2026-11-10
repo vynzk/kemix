@@ -4,7 +4,7 @@ import { File } from 'node-taglib-sharp'
 import type { AudioQuality } from '../types'
 
 /** Codec guessed from the file extension; refined with what taglib reports. */
-function codecFor(ext: string, description: string): AudioQuality['codec'] {
+export function codecFor(ext: string, description = ''): AudioQuality['codec'] {
 	const d = description.toLowerCase()
 	switch (ext) {
 		case 'flac':

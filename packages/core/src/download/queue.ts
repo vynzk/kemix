@@ -9,11 +9,13 @@ import type { Accounts } from '../accounts'
 import type { Library } from '../library'
 import type { SettingsStore } from '../settings'
 import type {
+	AccountService,
 	AudioQuality,
 	DownloadRow,
 	DownloadService,
 	DownloadStatus,
 	MatchCandidate,
+	OutputFormat,
 	QualityLevel,
 	ScanState,
 	SourceService,
@@ -27,10 +29,10 @@ import { DOWNLOAD_SERVICE_LABEL, isLossyService, serviceQualityLevel } from '../
 import { isrcMatch, LOSSY_MIN_SCORE, resolveTrack, searchService } from '../match/resolve'
 import { searchQueries } from '../match/score'
 import { extensionFor, playlistDir, trackFileName } from './paths'
-import { fetchCover, writeM3u, writeTags } from './tagger'
-import { readFileQuality } from './quality'
+import { copyTags, fetchCover, writeM3u, writeTags } from './tagger'
+import { codecFor, readFileQuality } from './quality'
 import { sourceUpload } from '../sources/soundcloud'
-import type { Mp3Converter } from './ffmpeg'
+import { pcmBitDepth, type AudioConverter, type PcmFormat } from './ffmpeg'
 import { errorMessage, now } from '../util'
 
 const MAX_ATTEMPTS = 3
@@ -52,6 +54,14 @@ interface Row {
 	provider: DownloadService | null
 	/** Quality the user picked for this download; null = the one in settings. */
 	quality_level: QualityLevel | null
+	/** File format the user picked for this download; null = the one in settings. */
+	format: OutputFormat | null
+}
+
+/** A file already on disk (in the `files` index) for some track, level and format. */
+interface KnownFile {
+	path: string
+	quality: AudioQuality | null
 }
 
 export class DownloadQueue {
@@ -70,8 +80,8 @@ export class DownloadQueue {
 		private library: Library,
 		private settings: SettingsStore,
 		private events: EventBus,
-		/** Converts downloads to MP3 when the 'mp3_compat' quality is picked. */
-		private mp3: Mp3Converter
+		/** Converts downloads: to MP3 for the 'mp3_compat' quality, to AIFF/WAV for those formats. */
+		private converter: AudioConverter
 	) {}
 
 	/** Resume work left over from a previous run (e.g. the app was closed mid-download). */
@@ -86,13 +96,15 @@ export class DownloadQueue {
 	 * Queue a playlist's tracks: all of them, or only the given positions.
 	 * With a `provider`, the tracks are looked up only there, and tracks that didn't make it before (in review, failed
 	 * or skipped) are tried again with it. Without one, the services are tried in priority order.
-	 * `level` applies to every queued track that isn't downloaded yet; without one, the quality in settings is used.
+	 * `level` and `format` apply to every queued track that isn't downloaded yet; without them, the ones in settings
+	 * are used.
 	 */
 	async enqueuePlaylist(
 		playlistId: number,
 		positions?: number[],
 		provider?: DownloadService | null,
-		level?: QualityLevel | null
+		level?: QualityLevel | null,
+		format?: OutputFormat | null
 	) {
 		if (provider && !isLossyService(provider) && !this.accounts.isConnected(provider)) {
 			throw new Error(`${DOWNLOAD_SERVICE_LABEL[provider]} no está conectado`)
@@ -110,25 +122,28 @@ export class DownloadQueue {
 		tx(this.db, () => {
 			this.db
 				.prepare(
-					`INSERT INTO downloads (playlist_id, position, track_id, status, updated_at, provider, quality_level)
-					 SELECT playlist_id, position, track_id, 'queued', ?, ?, ? FROM playlist_tracks WHERE playlist_id = ?${filter}
+					`INSERT INTO downloads (playlist_id, position, track_id, status, updated_at, provider, quality_level, format)
+					 SELECT playlist_id, position, track_id, 'queued', ?, ?, ?, ? FROM playlist_tracks WHERE playlist_id = ?${filter}
 					 ON CONFLICT(playlist_id, position) DO UPDATE SET
 					   status = CASE WHEN ${redo} THEN 'queued' ELSE downloads.status END,
 					   attempts = CASE WHEN ${redo} THEN 0 ELSE downloads.attempts END,
 					   error = CASE WHEN ${redo} THEN NULL ELSE downloads.error END,
 					   provider = CASE WHEN ${redo} THEN excluded.provider ELSE downloads.provider END,
 					   quality_level = CASE WHEN downloads.status = 'done' THEN downloads.quality_level ELSE excluded.quality_level END,
+					   format = CASE WHEN downloads.status = 'done' THEN downloads.format ELSE excluded.format END,
 					   updated_at = excluded.updated_at`
 				)
-				.run(t, provider ?? null, level ?? null, playlistId)
+				.run(t, provider ?? null, level ?? null, format ?? null, playlistId)
 			// Files deleted from disk since the last run get downloaded again.
 			const done = this.db
 				.prepare(`SELECT id, path FROM downloads WHERE playlist_id = ? AND status = 'done'${filter}`)
 				.all(playlistId) as { id: number; path: string | null }[]
 			const requeue = this.db.prepare(
-				`UPDATE downloads SET status = 'queued', attempts = 0, provider = ?, quality_level = ? WHERE id = ?`
+				`UPDATE downloads SET status = 'queued', attempts = 0, provider = ?, quality_level = ?, format = ? WHERE id = ?`
 			)
-			for (const d of done) if (!d.path || !fs.existsSync(d.path)) requeue.run(provider ?? null, level ?? null, d.id)
+			for (const d of done) {
+				if (!d.path || !fs.existsSync(d.path)) requeue.run(provider ?? null, level ?? null, format ?? null, d.id)
+			}
 		})
 		this.events.emit({ type: 'playlist', playlistId })
 		this.events.emit({ type: 'library' })
@@ -336,7 +351,7 @@ export class DownloadQueue {
 		const queries = query?.trim() ? [query.trim()] : searchQueries(track)
 		const threshold = this.settings.get().autoAcceptThreshold
 		const downloaders = provider ? [await this.#downloaderFor(provider)] : await this.accounts.downloaders()
-		if (!downloaders.length) throw new Error('Conecta Qobuz o Deezer, o busca en YouTube o SoundCloud')
+		if (!downloaders.length) throw new Error('Conecta Qobuz, Deezer o Soundeo, o busca en YouTube o SoundCloud')
 		const out: MatchCandidate[] = []
 		const failures: string[] = []
 		for (const d of downloaders) {
@@ -391,23 +406,26 @@ export class DownloadQueue {
 	}
 
 	/**
-	 * Same, for a track that isn't in the library, like a search result from `service`.
+	 * Same, for a track that isn't in the library, like a search result from `service` (or a Soundeo candidate).
 	 * `exact`: this very recording matters (checking a review candidate), so the service's own audio wins even when
 	 * it's only a clip; a YouTube search could land on another version.
 	 */
-	previewTrack(service: SourceService, track: SourceTrack, exact = false): Promise<TrackPreview | null> {
+	previewTrack(service: AccountService, track: SourceTrack, exact = false): Promise<TrackPreview | null> {
 		return this.#listen(service, track, () => this.accounts.youtube.previewFor(service, track), exact)
 	}
 
 	async #listen(
-		service: SourceService,
+		service: AccountService,
 		track: SourceTrack,
 		youtube: () => Promise<YouTubePreview | null>,
 		exact = false
 	): Promise<TrackPreview | null> {
 		let native: StreamPreview | null = null
 		try {
-			native = (await this.accounts.source(service).stream?.(track.sourceId)) ?? null
+			native =
+				service === 'soundeo'
+					? await this.accounts.soundeoPreview(track.sourceId)
+					: ((await this.accounts.source(service).stream?.(track.sourceId)) ?? null)
 		} catch {
 			// Not connected, or the service refused: YouTube is still there.
 		}
@@ -493,7 +511,7 @@ export class DownloadQueue {
 			const placeholders = [...this.#running].join(',') || '0'
 			const row = this.db
 				.prepare(
-					`SELECT id, playlist_id, position, track_id, status, attempts, provider, quality_level FROM downloads
+					`SELECT id, playlist_id, position, track_id, status, attempts, provider, quality_level, format FROM downloads
 					 WHERE status = 'queued' AND id NOT IN (${placeholders}) ORDER BY attempts, id LIMIT 1`
 				)
 				.get() as Row | undefined
@@ -530,7 +548,7 @@ export class DownloadQueue {
 		const track = this.library.getTrack(trackId)
 		const downloaders = provider ? [await this.accounts.downloader(provider)] : await this.accounts.downloaders()
 		if (!downloaders.length) {
-			throw new Error('Conecta Qobuz o Deezer (o activa YouTube o SoundCloud en Ajustes) para poder descargar')
+			throw new Error('Conecta Qobuz, Deezer o Soundeo (o activa YouTube o SoundCloud en Ajustes) para poder descargar')
 		}
 		const res = await resolveTrack(track, downloaders, this.settings.get().autoAcceptThreshold, {
 			findIsrc: (t, minScore) => this.accounts.findIsrc(t, minScore)
@@ -597,26 +615,42 @@ export class DownloadQueue {
 					}
 				: t
 
-		// Files are only reused at the quality they were downloaded in (levels a service can't tell apart count as one).
-		const level = row.quality_level ?? this.settings.get().downloadQuality
+		// Files are only reused at the quality and in the format they were made in (levels a service can't tell apart
+		// count as one).
+		const settings = this.settings.get()
+		const level = row.quality_level ?? settings.downloadQuality
+		const format = row.format ?? settings.outputFormat
+		const pcm: PcmFormat | null = format === 'original' ? null : format
 		const fileLevel = serviceQualityLevel(target.service, level)
-		const existing = this.db
-			.prepare('SELECT path, quality FROM files WHERE target_service = ? AND target_id = ? AND quality_level = ?')
-			.get(target.service, target.id, fileLevel) as { path: string; quality: string | null } | undefined
+		const existing = this.#knownFile(target, fileLevel, format)
 		const existingExt = existing ? path.extname(existing.path).slice(1).toLowerCase() : ''
 		// An MP3 was asked for: a file that came in another format (not converted back then) doesn't do.
-		if (existing && fs.existsSync(existing.path) && (level !== 'mp3_compat' || existingExt === 'mp3')) {
-			const dest = nameFor(fromSource(target), existingExt)
-			if (path.resolve(dest) !== path.resolve(existing.path)) {
+		if (existing && (pcm || level !== 'mp3_compat' || existingExt === 'mp3')) {
+			const dest = await this.#reuse(existing.path, nameFor(fromSource(target), existingExt), signal)
+			return this.#finish(row, dest, target.service, existing.quality ?? readFileQuality(dest))
+		}
+
+		// AIFF/WAV of a track downloaded before as the service delivers it: convert that file instead of downloading.
+		const original = pcm ? this.#knownFile(target, fileLevel, 'original') : null
+		if (pcm && original) {
+			this.#setStatus(row.id, 'downloading')
+			const source = original.quality ?? readFileQuality(original.path)
+			const dest = nameFor(fromSource(target), pcm)
+			const part = `${dest}.part`
+			try {
+				await this.converter.toPcm(original.path, part, { format: pcm, bitDepth: pcmBitDepth(source), signal })
 				await fsp.rm(dest, { force: true })
-				await fsp.link(existing.path, dest).catch(() => fsp.copyFile(existing.path, dest))
-				if (signal.aborted) {
-					await fsp.rm(dest, { force: true })
-					signal.throwIfAborted()
-				}
+				await fsp.rename(part, dest)
+			} catch (err) {
+				await fsp.rm(part, { force: true })
+				throw err
 			}
-			const quality = existing.quality ? (JSON.parse(existing.quality) as AudioQuality) : readFileQuality(dest)
-			return this.#finish(row, dest, target.service, quality)
+			try {
+				copyTags(original.path, dest)
+			} catch (err) {
+				console.warn(`[kemix] No se pudieron copiar los tags a ${dest}: ${errorMessage(err)}`)
+			}
+			return this.#saved(row, target, fileLevel, format, dest, source, signal)
 		}
 
 		this.#setStatus(row.id, 'downloading')
@@ -624,18 +658,20 @@ export class DownloadQueue {
 		const got = await downloader.getTrack(target.url)
 		const meta = fromSource(got.meta)
 		signal.throwIfAborted()
-		const audio = await got.open(level)
+		const audio = await got.open(level, format)
 		if (signal.aborted) {
 			audio.stream.destroy()
 			signal.throwIfAborted()
 		}
 		const ext = extensionFor(audio.mimeType)
-		// An MP3 that plays anywhere was asked for and something else came (YouTube's AAC/Opus, a FLAC): convert it.
-		const convert = level === 'mp3_compat' && ext !== 'mp3'
-		const dest = nameFor(meta, convert ? 'mp3' : ext)
+		// AIFF/WAV was asked for; or an MP3 that plays anywhere and something else came (YouTube's AAC/Opus, a FLAC).
+		const toMp3 = !pcm && level === 'mp3_compat' && ext !== 'mp3'
+		const convert = !!pcm || toMp3
+		const dest = nameFor(meta, pcm ?? (toMp3 ? 'mp3' : ext))
 		const part = `${dest}.part`
-		// When converting, the download goes to its own file and ffmpeg writes the .part.
-		const raw = convert ? `${dest}.download` : part
+		// When converting, the download goes to its own file (with its extension, so its quality can be read) and
+		// ffmpeg writes the .part.
+		const raw = convert ? `${dest}.download.${ext}` : part
 		let bytes = 0
 		const counter = new Transform({
 			transform: (chunk: Buffer, _enc, cb) => {
@@ -644,9 +680,19 @@ export class DownloadQueue {
 				cb(null, chunk)
 			}
 		})
+		let source: AudioQuality | null = null
 		try {
 			await pipeline(audio.stream, counter, fs.createWriteStream(raw), { signal })
-			if (convert) await this.mp3.toMp3(raw, part, { lossless: ['flac', 'wav', 'aiff'].includes(ext), signal })
+			if (convert) {
+				source = readFileQuality(raw)
+				const lossless = source?.lossless ?? ['flac', 'wav', 'aiff'].includes(codecFor(ext))
+				if (pcm && ext === pcm && source?.lossless && (source.bitDepth === 16 || source.bitDepth === 24)) {
+					// The service sent the very format asked for (Soundeo's AIFF or WAV): nothing to convert.
+					await fsp.rename(raw, part)
+					source = null
+				} else if (pcm) await this.converter.toPcm(raw, part, { format: pcm, bitDepth: pcmBitDepth(source), signal })
+				else await this.converter.toMp3(raw, part, { lossless, signal })
+			}
 			await fsp.rm(dest, { force: true })
 			await fsp.rename(part, dest)
 		} catch (err) {
@@ -663,22 +709,56 @@ export class DownloadQueue {
 			// The audio is fine without tags; don't fail the download over it.
 			console.warn(`[kemix] No se pudieron escribir tags en ${dest}: ${errorMessage(err)}`)
 		}
+		return this.#saved(row, target, fileLevel, format, dest, source, signal)
+	}
+
+	/** A file already made for this track at this level and in this format, if it's still on disk. */
+	#knownFile(target: TargetTrack, level: QualityLevel, format: OutputFormat): KnownFile | null {
+		const f = this.db
+			.prepare('SELECT path, quality FROM files WHERE target_service = ? AND target_id = ? AND quality_level = ? AND format = ?')
+			.get(target.service, target.id, level, format) as { path: string; quality: string | null } | undefined
+		if (!f || !fs.existsSync(f.path)) return null
+		return { path: f.path, quality: f.quality ? (JSON.parse(f.quality) as AudioQuality) : null }
+	}
+
+	/** Put an existing file at `dest` (hardlink, else copy) instead of downloading it again. */
+	async #reuse(file: string, dest: string, signal: AbortSignal): Promise<string> {
+		if (path.resolve(dest) === path.resolve(file)) return dest
+		await fsp.rm(dest, { force: true })
+		await fsp.link(file, dest).catch(() => fsp.copyFile(file, dest))
+		if (signal.aborted) {
+			await fsp.rm(dest, { force: true })
+			signal.throwIfAborted()
+		}
+		return dest
+	}
+
+	/** A new file is finished at `dest`: record it for reuse and mark the download done. `source`: what it was converted from. */
+	async #saved(
+		row: Row,
+		target: TargetTrack,
+		level: QualityLevel,
+		format: OutputFormat,
+		dest: string,
+		source: AudioQuality | null,
+		signal: AbortSignal
+	) {
 		// Deleted while the file was being finished: it's not wanted any more.
 		if (signal.aborted) {
 			await fsp.rm(dest, { force: true })
 			signal.throwIfAborted()
 		}
-
-		const quality = readFileQuality(dest)
+		const read = readFileQuality(dest)
+		const quality = read && source ? { ...read, convertedFrom: source } : read
 		tx(this.db, () => {
-			// The file may have replaced one at another level on the same path: that entry no longer describes it.
+			// The file may have replaced another one on the same path: that entry no longer describes it.
 			this.db.prepare('DELETE FROM files WHERE path = ?').run(dest)
 			this.db
 				.prepare(
-					`INSERT INTO files (target_service, target_id, quality_level, path, quality) VALUES (?, ?, ?, ?, ?)
+					`INSERT INTO files (target_service, target_id, quality_level, format, path, quality) VALUES (?, ?, ?, ?, ?, ?)
 					 ON CONFLICT DO UPDATE SET path = excluded.path, quality = excluded.quality`
 				)
-				.run(target.service, target.id, fileLevel, dest, quality ? JSON.stringify(quality) : null)
+				.run(target.service, target.id, level, format, dest, quality ? JSON.stringify(quality) : null)
 		})
 		this.#finish(row, dest, target.service, quality)
 	}

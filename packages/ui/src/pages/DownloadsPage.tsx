@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
-import { SERVICE_LABEL, bytes, cx, qualityLabel, qualityTone } from '../lib/format'
+import { SERVICE_LABEL, bytes, cx, qualityDetail, qualityLabel, qualityTone } from '../lib/format'
 import { Button, Empty, ErrorText, PageHeader, RemoveDownloadButton, StatusPill } from '../components/ui'
 
 const ACTIVE = ['queued', 'matching', 'downloading']
@@ -68,7 +68,7 @@ export function DownloadsPage() {
 									</td>
 									<td className="w-52 py-2.5 pr-4 text-right whitespace-nowrap">
 										{r.status === 'done' && (r.quality || r.service) && (
-											<span className={cx('text-xs', qualityTone(r.quality))}>
+											<span className={cx('text-xs', qualityTone(r.quality))} title={qualityDetail(r.quality) || undefined}>
 												{qualityLabel(r.quality)}
 												{r.service && (
 													<span className="text-zinc-500">

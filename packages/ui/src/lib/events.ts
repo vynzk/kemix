@@ -17,12 +17,15 @@ export function useLiveEvents(): SyncState {
 		const source = new EventSource('/api/events')
 		const invalidateLibrary = throttle(() => qc.invalidateQueries({ queryKey: ['library'] }), 750)
 		const invalidatePlaylist = throttleByKey((id: number) => qc.invalidateQueries({ queryKey: ['playlist', id] }), 750)
+		// Each track downloaded from Soundeo uses one of the day's downloads: keep the counter in Cuentas current.
+		const invalidateSoundeo = throttle(() => qc.invalidateQueries({ queryKey: ['soundeo-status'] }), 2000)
 
 		source.onmessage = (msg) => {
 			const event = JSON.parse(msg.data) as KemixEvent
 			switch (event.type) {
 				case 'accounts':
 					qc.invalidateQueries({ queryKey: ['state'] })
+					qc.invalidateQueries({ queryKey: ['soundeo-status'] })
 					break
 				case 'library':
 					invalidateLibrary()
@@ -41,6 +44,7 @@ export function useLiveEvents(): SyncState {
 					upsertDownload(qc, event.row)
 					invalidatePlaylist(event.row.playlistId)
 					invalidateLibrary()
+					if (event.row.service === 'soundeo' && event.row.status === 'done') invalidateSoundeo()
 					break
 				case 'download-removed':
 					qc.setQueryData<DownloadRow[]>(['downloads'], (rows) => rows?.filter((r) => r.id !== event.id))

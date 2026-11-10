@@ -27,13 +27,14 @@ Nada. El ejecutable ya trae todo lo que Kemix necesita para funcionar:
   se usa esa.
 - **Runtime de JavaScript para yt-dlp** (YouTube lo exige para resolver sus desafíos): Kemix le presta su propio
   ejecutable, que funciona como Node con `ELECTRON_RUN_AS_NODE`. No hace falta Deno ni Node.
-- **ffmpeg** (solo para la calidad «MP3 compatible»): si lo que llega no es MP3 (FLAC, o AAC/Opus de YouTube), se
-  convierte. Kemix baja su propia copia la primera vez que tiene que convertir: un build estático fijo de los
+- **ffmpeg** (solo para convertir: a MP3 con «MP3 320 kbps», o a AIFF/WAV): Kemix baja su propia copia la primera vez
+  que tiene que convertir: un build estático fijo de los
   [releases de ffmpeg-static](https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1) (~30 MB), verificado
-  con su SHA-256, y la guarda en la misma carpeta `bin`. Si no puede bajarlo, usa el `ffmpeg` del sistema si hay
-  uno. En las demás calidades no se usa: el audio de YouTube y SoundCloud se guarda tal cual llega.
+  con el SHA-256 fijado en `packages/core/src/download/ffmpeg.ts`, y la guarda en la misma carpeta `bin`. No se
+  actualiza sola: para cambiar de versión, actualiza ahí la URL y los checksums. Si no puede bajarlo, usa el `ffmpeg`
+  del sistema si hay uno. Sin conversión no se usa: el audio se guarda tal cual llega.
 
-Lo único que necesita es conexión a internet la primera vez que baja algo de YouTube o convierte a MP3.
+Lo único que necesita es conexión a internet la primera vez que baja algo de YouTube o convierte un formato.
 
 Los datos (base de datos, credenciales cifradas, yt-dlp y ffmpeg) se guardan en:
 
@@ -207,7 +208,7 @@ Si el sistema no permite el sandbox de Chromium (Ubuntu 24+), el AppImage arranc
 | `gyp ERR!` / `node-gyp` al hacer `npm ci` | Faltan las herramientas para compilar: Build Tools de Visual Studio + Python en Windows, `build-essential` + `python3` en Linux. |
 | Kemix dice "El puerto local ya está en uso" | Hay otra copia de Kemix abierta (puede ser `npm run dev`). Ciérrala. |
 | El AppImage no abre y menciona FUSE | `sudo apt install libfuse2` (en Ubuntu 24+: `libfuse2t64`), o ábrelo con `./Kemix-*.AppImage --appimage-extract-and-run`. |
-| Una descarga en «MP3 compatible» dice "No se pudo descargar ffmpeg" | Kemix no llegó a GitHub para bajar ffmpeg. Reintenta con conexión, o instala ffmpeg en el sistema (que quede en el PATH). |
+| Una descarga en «MP3 320 kbps», AIFF o WAV dice "No se pudo descargar ffmpeg" | Kemix no llegó a GitHub para bajar ffmpeg. Reintenta con conexión, o instala ffmpeg en el sistema (que quede en el PATH). |
 | La descarga desde YouTube dice "No se pudo descargar yt-dlp" | Kemix no llegó a GitHub para bajar yt-dlp (sin internet, proxy o firewall). Reintenta con conexión, o instala yt-dlp aparte y pon su ruta en Ajustes. |
 
 Nota sobre Linux: las credenciales se cifran con el llavero del sistema (GNOME Keyring o KWallet). En un escritorio

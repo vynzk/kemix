@@ -5,6 +5,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
+import type { AudioQuality } from '../types'
 import { errorMessage } from '../util'
 
 /**
@@ -94,6 +95,44 @@ export interface Mp3Converter {
 	toMp3(input: string, output: string, opts: { lossless: boolean; signal?: AbortSignal }): Promise<void>
 }
 
+/** Uncompressed formats, for DJ software and producers. */
+export type PcmFormat = 'aiff' | 'wav'
+
+/** Converts downloads: to an MP3 for any player, or to AIFF/WAV. */
+export interface AudioConverter extends Mp3Converter {
+	/** Write `input` as AIFF or WAV to `output`, keeping its sample rate, at `bitDepth`. */
+	toPcm(input: string, output: string, opts: { format: PcmFormat; bitDepth: 16 | 24; signal?: AbortSignal }): Promise<void>
+}
+
+/**
+ * Bit depth of the AIFF/WAV made from audio of quality `q`: 24-bit only when there are more than 16 bits to keep
+ * (lossy audio decodes to 16). Unknown: 24, so nothing is lost.
+ */
+export function pcmBitDepth(q: AudioQuality | null | undefined): 16 | 24 {
+	if (!q) return 24
+	return q.lossless && (q.bitDepth ?? 16) > 16 ? 24 : 16
+}
+
+/**
+ * Arguments for AIFF (big-endian PCM) or WAV (little-endian PCM) at `bitDepth`, keeping the sample rate and channels.
+ * Audio only and no metadata: tags and cover art are written afterwards, as for every download.
+ */
+export function pcmArgs(input: string, output: string, format: PcmFormat, bitDepth: 16 | 24): string[] {
+	return [
+		'-hide_banner',
+		'-nostdin',
+		'-loglevel', 'error',
+		'-y',
+		'-i', input,
+		'-map', '0:a:0',
+		'-vn',
+		'-map_metadata', '-1',
+		'-c:a', `pcm_s${bitDepth}${format === 'aiff' ? 'be' : 'le'}`,
+		'-f', format,
+		output
+	]
+}
+
 /**
  * Arguments for the most widely playable MP3: constant bitrate (some old players can't seek or time VBR files),
  * 44.1 kHz stereo at most, audio only (cover art goes back in as a tag afterwards), no metadata (rewritten after).
@@ -118,7 +157,7 @@ export function mp3Args(input: string, output: string, lossless: boolean): strin
 }
 
 /** ffmpeg: Kemix's own copy (downloaded on first use), else one on the PATH. */
-export class Ffmpeg implements Mp3Converter {
+export class Ffmpeg implements AudioConverter {
 	#bin?: Promise<string>
 
 	constructor(private managed?: ManagedFfmpeg) {}
@@ -136,8 +175,8 @@ export class Ffmpeg implements Mp3Converter {
 		}
 		if (await runs('ffmpeg')) return 'ffmpeg'
 		throw new Error(
-			`${managedError}Para convertir a MP3 Kemix baja ffmpeg la primera vez (hace falta conexión a internet). ` +
-				'Si no puede, instala ffmpeg en el sistema (https://ffmpeg.org).'
+			`${managedError}Para convertir a MP3, AIFF o WAV Kemix baja ffmpeg la primera vez (hace falta conexión a ` +
+				'internet). Si no puede, instala ffmpeg en el sistema (https://ffmpeg.org).'
 		)
 	}
 
@@ -149,17 +188,25 @@ export class Ffmpeg implements Mp3Converter {
 		return this.#bin
 	}
 
-	async toMp3(input: string, output: string, opts: { lossless: boolean; signal?: AbortSignal }) {
+	toMp3(input: string, output: string, opts: { lossless: boolean; signal?: AbortSignal }) {
+		return this.#run(mp3Args(input, output, opts.lossless), 'MP3', opts.signal)
+	}
+
+	toPcm(input: string, output: string, opts: { format: PcmFormat; bitDepth: 16 | 24; signal?: AbortSignal }) {
+		return this.#run(pcmArgs(input, output, opts.format, opts.bitDepth), opts.format.toUpperCase(), opts.signal)
+	}
+
+	async #run(args: string[], target: string, signal?: AbortSignal) {
 		const bin = await this.bin()
-		opts.signal?.throwIfAborted()
+		signal?.throwIfAborted()
 		await new Promise<void>((resolve, reject) => {
-			const child = spawn(bin, mp3Args(input, output, opts.lossless), { windowsHide: true, signal: opts.signal })
+			const child = spawn(bin, args, { windowsHide: true, signal })
 			let stderr = ''
 			child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)))
 			child.on('error', reject)
 			child.on('close', (code) => {
 				if (code === 0) resolve()
-				else reject(new Error(`No se pudo convertir a MP3: ${stderr.trim().split('\n').pop() || `código ${code}`}`))
+				else reject(new Error(`No se pudo convertir a ${target}: ${stderr.trim().split('\n').pop() || `código ${code}`}`))
 			})
 		})
 	}

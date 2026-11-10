@@ -1,7 +1,8 @@
 # Kemix
 
 App de escritorio para traer tus playlists de **Spotify, YouTube Music, Qobuz y Deezer**, ordenarlas en carpetas y
-descargarlas en FLAC desde **Qobuz** (o **Deezer** como respaldo) usando [`lucida`](https://www.npmjs.com/package/lucida).
+descargarlas en FLAC desde **Qobuz** (o **Deezer** como respaldo) usando [`lucida`](https://www.npmjs.com/package/lucida),
+o en WAV/AIFF desde **Soundeo** con una cuenta Premium.
 
 ## Uso
 
@@ -26,6 +27,7 @@ Las descargas van a `~/Music/Kemix/<Playlist>/NN - Artista - Título.flac`, con 
 | Qobuz | Botón "Iniciar sesión en Qobuz": abre play.qobuz.com en una ventana y Kemix captura la sesión al entrar (usa email y contraseña; el login con Google suele bloquearse en ventanas de apps). Solo disponible en la app de escritorio. |
 | Deezer | Las cookies de deezer.com (recomendado: archivo de Get cookies.txt; Kemix toma la cookie `arl`) o solo el valor de `arl` (DevTools → Application → Cookies). Caduca cada pocos meses. |
 | Spotify | **Cualquier cuenta (sin Premium)**, solo en la app de escritorio: "Iniciar sesión en Spotify" abre open.spotify.com en una ventana y Kemix usa la API interna del reproductor web (la Web API pública rechaza ese token con 429); la sesión se renueva sola cada hora en una ventana oculta. Carga playlists y Me gusta y permite buscar, pero no crear playlists ni leer ISRC (el matching va por título, artista y duración). **Premium (Client ID)**: una app propia en developer.spotify.com con el Redirect URI `http://127.0.0.1:47800/api/auth/spotify/callback`; pega su Client ID. Spotify solo abre su Web API a cuentas Premium: si la cuenta es gratis, Kemix avisa y propone el otro método. |
+| Soundeo | El email y la contraseña de soundeo.com (en la app de escritorio y en la versión web). Se conecta cualquier cuenta, pero Soundeo solo deja descargar a las **Premium** (no vende temas sueltos): sin Premium solo sirve para buscar. Kemix guarda la contraseña cifrada para volver a iniciar sesión cuando Soundeo cierra la sesión. |
 | YouTube Music | Las cookies de music.youtube.com (archivo de Get cookies.txt o el header `cookie`). Si hay varias cuentas de Google en la sesión, Kemix pregunta cuál usar. Google renueva estas cookies mientras el sitio sigue abierto y la copia exportada deja de valer: expórtalas desde una ventana de incógnito y ciérrala justo después, sin cerrar sesión. |
 
 **Cómo sacar cookies.txt:** instala la extensión [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
@@ -49,19 +51,29 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   temas sueltos y descargar solo esos. Cada descarga se puede eliminar, en "Descargas" o en la fila del tema dentro de
   la playlist (aparece al pasar el ratón): si está en curso se detiene, y si ya terminó se borra su archivo del disco
   (las copias en otras playlists se quedan). "Limpiar terminadas" solo las quita de la lista.
-- **Calidad**: antes de bajar se muestra la máxima disponible (Qobuz: la del tema, p. ej. FLAC 24-bit/96 kHz; Deezer:
-  la que permite la cuenta). Después se muestra la calidad real, leída del archivo descargado, y el proveedor del que
-  vino. Al elegir un proveedor en la playlist, solo se ofrecen las calidades que da ese proveedor con tu cuenta. Se puede descargar en la
-  máxima disponible o con un tope: Hi-Res hasta 24-bit/96 kHz, CD (FLAC 16-bit/44.1 kHz), MP3 320 o MP3 128. El valor
-  por defecto está en Ajustes y cada playlist puede elegir otro al descargar; si un tema no existe en esa calidad se baja
-  en la mejor que tenga por debajo. Qobuz no baja de MP3 320 y el único FLAC de Deezer es 16-bit/44.1 kHz. Los temas
-  ya descargados no cambian; un archivo solo se reutiliza para otra playlist si se bajó en la misma calidad.
+- **Calidad y formato**: un solo selector, en Ajustes (valor por defecto) y en cada playlist, junto a "Descargar
+  desde". Agrupa:
+  - *Sin convertir*: FLAC máxima disponible, hasta 24-bit/96 kHz o CD 16-bit/44.1 kHz.
+  - *AIFF* y *WAV* (para DJ y producción), cada uno en máxima, hasta 24-bit/96 kHz o 16-bit/44.1 kHz (para equipos que
+    no leen Hi-Res). Mantienen la frecuencia de lo que se baja y quedan en 24-bit solo si la fuente tiene más de 16.
+  - *MP3*: 320 kbps, siempre un MP3 que suena en cualquier reproductor (Qobuz/Deezer entregan su MP3; lo demás se
+    convierte a CBR 44.1 kHz, a 320 kbps si el original es sin pérdida y a 192 si ya tenía pérdida), o 128 kbps.
+
+  Con un proveedor elegido solo aparecen las opciones que da con tu cuenta (Qobuz no baja de MP3 320, el único FLAC
+  de Deezer es 16-bit/44.1 kHz, YouTube y SoundCloud tienen una sola calidad). Si un tema no llega a la calidad
+  elegida, se baja en la mejor que tenga por debajo. Los tags y la carátula se escriben en el archivo final. Los temas
+  ya descargados no cambian; un archivo solo se reutiliza para otra playlist si se hizo en la misma calidad y formato,
+  y si un tema ya se bajó sin convertir, para AIFF/WAV se convierte ese archivo en lugar de volver a descargarlo.
+  Después de bajar se muestra la calidad real, leída del archivo, y el proveedor del que vino. Para convertir se usa
+  ffmpeg: Kemix baja su propia copia la primera vez (ver [COMPILAR.md](COMPILAR.md)) o usa la del sistema.
 - **Escanear calidad**: en cada playlist, "Escanear calidad" busca los temas (todos o los marcados) en el proveedor
-  elegido sin descargar nada, y muestra en qué calidad saldría cada uno con la calidad elegida y tu cuenta (y la
-  máxima del tema si es mayor), más un resumen: Hi-Res, CD, con pérdida, dudosos y no encontrados. Cada grupo del
-  resumen se puede seleccionar para descargar solo esos. Al descargar después se usan esos resultados sin buscar de
-  nuevo. Volver a escanear solo busca lo que quedó sin resolver; si un tema que esperaba en Revisión aparece, su
-  descarga sigue sola.
+  elegido sin descargar nada, y muestra en la columna Calidad en qué calidad saldría cada uno con la opción elegida y
+  tu cuenta (y la máxima del tema si es mayor), y el formato al que se convierte (p. ej. `FLAC 24-bit/96 kHz → AIFF`).
+  Avisa de los temas cuya fuente queda por debajo de la conversión: "⚠ Fuente con pérdida" para AIFF/WAV, "⚠ Menos
+  de 320 kbps" para MP3 320 (p. ej. YouTube o Deezer gratis). Encima de la tabla hay un resumen: con aviso, Hi-Res,
+  CD, con pérdida, dudosos y no encontrados. Cada grupo se puede seleccionar para descargar solo esos, y "Seleccionar
+  sin los con aviso" deja fuera los marcados. Al descargar después se usan esos resultados sin buscar de nuevo. Volver
+  a escanear solo busca lo que quedó sin resolver; si un tema que esperaba en Revisión aparece, su descarga sigue sola.
 - **Buscar y crear playlists**: en "Buscar" eliges un servicio conectado, buscas temas, los agregas a una playlist nueva
   (con orden) y se crea como privada en tu cuenta de ese servicio; luego aparece en la Biblioteca. Spotify pide permiso
   de escritura: las conexiones hechas antes de esta función deben desconectarse y volver a conectarse.
@@ -89,6 +101,15 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   está en la prioridad de servicios). SoundCloud no deja que otras apps creen playlists: en Buscar, los temas elegidos
   en SoundCloud se guardan en una playlist nueva de otro servicio conectado (Spotify, YouTube Music, Qobuz o Deezer).
   Kemix busca cada tema ahí y avisa cuáles no encontró.
+- **Soundeo** (solo descarga, para DJ): habla con los mismos endpoints que su web (no tiene API pública). Busca solo
+  entre los temas descargables (`/list/tracks?availableFilter=1`) y compara título, artistas y duración (Soundeo no
+  muestra ISRC). Baja su WAV 16-bit/44.1 kHz; si eliges AIFF pide directamente el AIFF de Soundeo, y en WAV guarda su
+  WAV, en ambos casos sin pasar por ffmpeg; para MP3 baja su MP3 320. Cada tema que baja gasta una de las descargas
+  del día del plan (Premium 5 a 150; se renuevan a medianoche, hora de Europa central): la tarjeta de Cuentas muestra
+  cuántas quedan, y si se acaban o la cuenta no tiene Premium la descarga falla con ese motivo. Al conectar por primera
+  vez una cuenta Premium, Soundeo entra en la prioridad de servicios detrás de Qobuz y Deezer, así que solo se usa con
+  lo que esos no tienen (se puede mover o quitar en Ajustes). En Revisión, el ▶ de una opción de Soundeo reproduce su
+  propio clip de ese mismo mix.
 - **Versión web**: `packages/server/src/standalone.ts` corre todo sin Electron. Variables: `KEMIX_DATA_DIR`,
   `KEMIX_SECRET` (clave de cifrado de credenciales), `KEMIX_TOKEN`, `KEMIX_UI_DIR`, `KEMIX_HOST`, `KEMIX_PORT`.
   Para hacerla multiusuario falta añadir login de usuarios y separar los datos por usuario.
@@ -99,4 +120,6 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   así que se puede parchear o reemplazar ahí.
 - Spotify (en modo desarrollo) no da acceso a playlists generadas por Spotify (Daily Mix, Discover Weekly…).
 - La integración con YouTube Music no es oficial y puede romperse cuando YouTube cambie su web.
+- La de Soundeo tampoco: lee su web (`packages/core/src/sources/soundeo.ts`) y puede romperse si la cambian. Si
+  Soundeo empieza a pedir captcha al iniciar sesión, hay que entrar una vez en soundeo.com desde el navegador.
 - Descargar desde estos servicios va contra sus términos de uso; es para uso personal.

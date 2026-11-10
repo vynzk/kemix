@@ -117,6 +117,24 @@ const MIGRATIONS: string[] = [
 		SELECT target_service, target_id, 'max', path, quality FROM files;
 	DROP TABLE files;
 	ALTER TABLE files_new RENAME TO files;
+	`,
+	// 6: the file format each download asks for (NULL: the one in settings), and one file per track, level and
+	// format, so a converted file (AIFF, WAV, MP3) is only reused in that same format. Everything until now is 'original'.
+	`
+	ALTER TABLE downloads ADD COLUMN format TEXT;
+	CREATE TABLE files_new (
+		target_service TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		quality_level TEXT NOT NULL,
+		format TEXT NOT NULL,
+		path TEXT NOT NULL,
+		quality TEXT,
+		PRIMARY KEY (target_service, target_id, quality_level, format)
+	);
+	INSERT INTO files_new (target_service, target_id, quality_level, format, path, quality)
+		SELECT target_service, target_id, quality_level, 'original', path, quality FROM files;
+	DROP TABLE files;
+	ALTER TABLE files_new RENAME TO files;
 	`
 ]
 

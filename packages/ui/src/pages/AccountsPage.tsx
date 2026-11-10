@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { AccountInfo, AudioQuality, DownloadService, SourceService, TargetService, YtMusicAccount } from '@kemix/core'
+import type { AccountInfo, AccountService, AudioQuality, DownloadService, TargetService, YtMusicAccount } from '@kemix/core'
 import { api } from '../lib/api'
 import { useDownloadQualities } from '../lib/hooks'
 import { SERVICE_COLOR, SERVICE_LABEL, cx, qualityLabel, qualityTone } from '../lib/format'
@@ -9,7 +9,7 @@ import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 export function AccountsPage() {
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
 	const accounts = new Map(state.data?.accounts.map((a) => [a.service, a]))
-	const get = (s: SourceService): AccountInfo => accounts.get(s) ?? { service: s, status: 'disconnected' }
+	const get = (s: AccountService): AccountInfo => accounts.get(s) ?? { service: s, status: 'disconnected' }
 	const qualities = useDownloadQualities()
 	const priority = state.data?.settings.servicePriority ?? []
 	const download = (service: TargetService) => (
@@ -27,8 +27,8 @@ export function AccountsPage() {
 		<div>
 			<PageHeader title="Cuentas">
 				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists.
-				SoundCloud importa tus playlists y Me gusta, y junto con YouTube sirve de respaldo para descargar lo que no está
-				en Qobuz ni Deezer.
+				Soundeo solo descarga (WAV, AIFF o MP3 320, con su Premium). SoundCloud importa tus playlists y Me gusta, y junto
+				con YouTube sirve de respaldo para descargar lo que no está en los demás.
 			</PageHeader>
 			<div className="px-8 pt-8">
 				<AccountsGuide connected={(s) => get(s).status === 'connected'} />
@@ -97,24 +97,36 @@ export function AccountsPage() {
 				>
 					<SoundCloudForm browserLogin={state.data?.browserLogin ?? false} />
 				</AccountCard>
+				<AccountCard
+					account={get('soundeo')}
+					role="Solo descargar (para DJ)"
+					download={
+						<div className="space-y-2">
+							{download('soundeo')}
+							<SoundeoNote connected={get('soundeo').status === 'connected'} priority={priority} />
+						</div>
+					}
+				>
+					<SoundeoForm />
+				</AccountCard>
 				<ComingSoonCard name="Tidal" color="#e4e4e7" />
-				<ComingSoonCard name="Soundeo" color="#f5a623" />
 			</div>
 		</div>
 	)
 }
 
 /** The services, by what connecting them gives. */
-const GUIDE: { service: SourceService; imports: boolean; downloads: string | null }[] = [
+const GUIDE: { service: AccountService; imports: boolean; downloads: string | null }[] = [
 	{ service: 'qobuz', imports: true, downloads: 'FLAC hasta 24-bit/192 kHz' },
 	{ service: 'deezer', imports: true, downloads: 'FLAC o MP3, según tu plan' },
 	{ service: 'spotify', imports: true, downloads: null },
 	{ service: 'ytmusic', imports: true, downloads: null },
-	{ service: 'soundcloud', imports: true, downloads: 'La mejor de cada tema; con cuenta, originales y Go+' }
+	{ service: 'soundcloud', imports: true, downloads: 'La mejor de cada tema; con cuenta, originales y Go+' },
+	{ service: 'soundeo', imports: false, downloads: 'WAV, AIFF o MP3 320, con Premium (temas por día según el plan)' }
 ]
 
 /** How accounts work: some only import playlists, others also download, and the more download accounts the better. */
-function AccountsGuide({ connected }: { connected: (s: SourceService) => boolean }) {
+function AccountsGuide({ connected }: { connected: (s: AccountService) => boolean }) {
 	const downloaders = GUIDE.filter((g) => g.downloads)
 	const ready = downloaders.filter((g) => connected(g.service)).length
 	return (
@@ -127,8 +139,8 @@ function AccountsGuide({ connected }: { connected: (s: SourceService) => boolean
 			</summary>
 			<div className="mt-3 space-y-3 text-xs text-muted">
 				<p>
-					Cada cuenta que agregas sirve para algo distinto. Todas <b className="text-zinc-300">importan playlists</b>, pero
-					solo algunas además <b className="text-zinc-300">permiten descargar</b> el audio:
+					Cada cuenta que agregas sirve para algo distinto. Casi todas <b className="text-zinc-300">importan playlists</b>,
+					y algunas además (o solo, como Soundeo) <b className="text-zinc-300">permiten descargar</b> el audio:
 				</p>
 				<ul className="grid gap-1.5 sm:grid-cols-2">
 					{GUIDE.map((g) => (
@@ -137,7 +149,7 @@ function AccountsGuide({ connected }: { connected: (s: SourceService) => boolean
 							<span className="font-medium text-zinc-200">{SERVICE_LABEL[g.service]}</span>
 							{g.downloads ? (
 								<span className="rounded bg-emerald-950 px-1.5 py-0.5 text-[11px] text-emerald-300" title={g.downloads}>
-									Importa + descarga
+									{g.imports ? 'Importa + descarga' : 'Solo descarga'}
 								</span>
 							) : (
 								<span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300">Solo importa</span>
@@ -158,10 +170,14 @@ function AccountsGuide({ connected }: { connected: (s: SourceService) => boolean
 						Conecta el servicio donde tienes tus playlists (Spotify, YouTube Music, Qobuz, Deezer o SoundCloud) para
 						importarlas.
 					</li>
-					<li>Conecta Qobuz y/o Deezer para poder descargar en buena calidad, aunque tus playlists estén en otro lado.</li>
 					<li>
-						Al descargar, elige la calidad. Si solo quieres que la canción suene en cualquier reproductor (auto, parlante,
-						celular), usa <b className="text-zinc-300">MP3 compatible</b>.
+						Conecta Qobuz, Deezer y/o Soundeo para poder descargar en buena calidad, aunque tus playlists estén en otro
+						lado.
+					</li>
+					<li>
+						Al descargar, elige la calidad y el formato. Para rekordbox, Serato o CDJ usa{' '}
+						<b className="text-zinc-300">AIFF</b>; si solo quieres que la canción suene en cualquier reproductor (auto,
+						parlante, celular), usa <b className="text-zinc-300">MP3 320 kbps</b>.
 					</li>
 				</ol>
 			</div>
@@ -184,10 +200,11 @@ function DownloadQuality(props: {
 			api.updateSettings({ servicePriority: [props.service, ...props.priority.filter((s) => s !== props.service)] }),
 		onSettled: () => qc.invalidateQueries({ queryKey: ['state'] })
 	})
-	const plans =
-		props.service === 'qobuz'
-			? 'FLAC hasta 24-bit/192 kHz (según el tema)'
-			: 'FLAC 16-bit/44.1 kHz con HiFi, MP3 320 con Premium, MP3 128 gratis'
+	const plans = {
+		qobuz: 'FLAC hasta 24-bit/192 kHz (según el tema)',
+		deezer: 'FLAC 16-bit/44.1 kHz con HiFi, MP3 320 con Premium, MP3 128 gratis',
+		soundeo: 'WAV o AIFF 16-bit/44.1 kHz, o MP3 320, si la cuenta tiene Premium'
+	}[props.service]
 
 	if (!props.connected) return <p className="text-xs text-zinc-500">Al conectarla descarga en {plans}.</p>
 	return (
@@ -483,6 +500,95 @@ function SoundCloudForm({ browserLogin }: { browserLogin: boolean }) {
 				</form>
 			</details>
 		</div>
+	)
+}
+
+const SOUNDEO_PREMIUM_URL = 'https://soundeo.com/account/premium'
+
+/**
+ * Whether Soundeo can download with the connected account (only Premium can) and how many tracks it has left today;
+ * before connecting, what it takes.
+ */
+function SoundeoNote({ connected, priority }: { connected: boolean; priority: DownloadService[] }) {
+	const status = useQuery({
+		queryKey: ['soundeo-status'],
+		queryFn: api.soundeoStatus,
+		enabled: connected,
+		staleTime: 30_000,
+		retry: false
+	})
+	if (!connected) {
+		return (
+			<p className="text-xs text-muted">
+				Soundeo solo deja descargar a cuentas <b className="text-zinc-300">Premium</b> (de 5 a 150 temas por día según el
+				plan; no vende temas sueltos), y cada tema que bajas gasta una de esas descargas. Una cuenta sin Premium también se
+				conecta, pero solo sirve para buscar en Soundeo y ver qué temas tiene.
+			</p>
+		)
+	}
+	if (status.isLoading) return <p className="text-xs text-muted">Revisando tu cuenta de Soundeo…</p>
+	if (status.error || !status.data) return <ErrorText error={status.error} />
+	const s = status.data
+	if (!s.premium) {
+		return (
+			<p className="rounded-md bg-amber-950/30 px-3 py-2 text-xs text-amber-300/90">
+				<b>Tu cuenta no tiene Premium</b> y Soundeo no deja descargar sin él (no vende temas sueltos). Con ella puedes
+				buscar en Soundeo y ver qué temas tiene; para bajarlos necesitas un plan en{' '}
+				<a className="underline" href={SOUNDEO_PREMIUM_URL} target="_blank" rel="noreferrer">
+					soundeo.com/account/premium ↗
+				</a>
+				. Cuando lo tengas, esta tarjeta lo detecta sola.
+			</p>
+		)
+	}
+	return (
+		<div className="space-y-1 text-xs text-muted">
+			<p>
+				<span className={cx('font-medium', s.downloadsLeft || s.bonusLeft ? 'text-emerald-300' : 'text-amber-300')}>
+					{s.downloadsLeft ?? '?'} {s.downloadsLeft === 1 ? 'descarga disponible' : 'descargas disponibles'} hoy
+				</span>
+				{s.bonusLeft ? ` + ${s.bonusLeft} de bonus` : ''}
+				{s.resetsIn ? ` · se renuevan en ${s.resetsIn}` : ' · se renuevan a medianoche (hora de Europa central)'}.
+			</p>
+			<p>
+				Cada tema que bajas desde Soundeo gasta una. Si eliges AIFF o WAV, Soundeo los entrega así, sin convertir. Un tema
+				ya bajado para otra playlist se reutiliza y no se vuelve a pedir.
+			</p>
+			<p>
+				{priority.includes('soundeo')
+					? `En las descargas automáticas se usa en el puesto ${priority.indexOf('soundeo') + 1} de la prioridad (Ajustes → Prioridad de servicios).`
+					: 'No está en la prioridad de descarga: elígelo al descargar una playlist, o añádelo en Ajustes → Prioridad de servicios.'}
+			</p>
+		</div>
+	)
+}
+
+function SoundeoForm() {
+	const [email, setEmail] = useState('')
+	const [password, setPassword] = useState('')
+	const connect = useConnect(api.connectSoundeo)
+	return (
+		<form
+			className="space-y-3"
+			onSubmit={(e) => {
+				e.preventDefault()
+				connect.mutate({ email, password }, { onSuccess: () => setPassword('') })
+			}}
+		>
+			<Field label="Email">
+				<Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
+			</Field>
+			<Field
+				label="Contraseña"
+				hint="La de soundeo.com. Kemix la guarda cifrada en este equipo para volver a iniciar sesión cuando Soundeo cierre la sesión, sin pedírtela otra vez."
+			>
+				<Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+			</Field>
+			<ErrorText error={connect.error} />
+			<Button variant="primary" type="submit" disabled={connect.isPending || !email.trim() || !password}>
+				{connect.isPending ? 'Iniciando sesión…' : 'Conectar Soundeo'}
+			</Button>
+		</form>
 	)
 }
 

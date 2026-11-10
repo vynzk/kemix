@@ -1,16 +1,19 @@
 import type {
 	AccountInfo,
+	AccountService,
 	AudioQuality,
 	DownloadRow,
 	DownloadService,
 	Folder,
 	MatchCandidate,
+	OutputFormat,
 	PlaylistDetail,
 	PlaylistSummary,
 	QualityLevel,
 	ReviewItem,
 	ScanState,
 	Settings,
+	SoundeoStatus,
 	SourceService,
 	SourceTrack,
 	TrackPreview,
@@ -37,6 +40,13 @@ export interface AppState {
 	browserLogin: boolean
 }
 
+export interface DownloadOptions {
+	positions?: number[]
+	provider?: DownloadService | null
+	quality?: QualityLevel | null
+	format?: OutputFormat | null
+}
+
 export const api = {
 	state: () => request<AppState>('GET', '/api/state'),
 	updateSettings: (patch: Partial<Settings>) => request<Settings>('PUT', '/api/settings', patch),
@@ -53,7 +63,12 @@ export const api = {
 	startSpotify: () => request<{ url: string }>('POST', '/api/accounts/spotify/start'),
 	/** Any account, Premium or not: sign in on open.spotify.com in a window (desktop app). */
 	connectSpotifyWeb: () => request('POST', '/api/accounts/spotify/web'),
-	disconnect: (service: SourceService) => request('DELETE', `/api/accounts/${service}`),
+	/** Soundeo signs in with email and password (any account; only Premium ones download). */
+	connectSoundeo: (body: { email: string; password: string }) =>
+		request<SoundeoStatus>('POST', '/api/accounts/soundeo', body),
+	/** Whether the connected Soundeo account has Premium, and its downloads left today. */
+	soundeoStatus: () => request<SoundeoStatus>('GET', '/api/accounts/soundeo'),
+	disconnect: (service: AccountService) => request('DELETE', `/api/accounts/${service}`),
 	/** Best quality each download service gives with the connected account. */
 	downloadQualities: () => request<Partial<Record<DownloadService, AudioQuality>>>('GET', '/api/accounts/quality'),
 
@@ -63,10 +78,9 @@ export const api = {
 	resyncPlaylist: (id: number) => request('POST', `/api/playlists/${id}/sync`),
 	/**
 	 * Without positions, queues the whole playlist. Without a provider, services are tried in priority order.
-	 * Without a quality, the one in settings is used.
+	 * Without a quality or format, the ones in settings are used.
 	 */
-	downloadPlaylist: (id: number, positions?: number[], provider?: DownloadService | null, quality?: QualityLevel | null) =>
-		request('POST', `/api/playlists/${id}/download`, { positions, provider, quality }),
+	downloadPlaylist: (id: number, opts: DownloadOptions = {}) => request('POST', `/api/playlists/${id}/download`, opts),
 	/** Look the tracks up (without downloading) to learn the best quality each has; runs in the background. */
 	scanPlaylist: (id: number, positions?: number[], provider?: DownloadService | null) =>
 		request<{ scan: ScanState }>('POST', `/api/playlists/${id}/scan`, { positions, provider }),
@@ -76,7 +90,7 @@ export const api = {
 	 * Audio for a track that isn't in the library (a search result from `service`): the service's full song, else
 	 * YouTube. `exact`: that very recording, so the service's own clip beats a YouTube video of maybe another version.
 	 */
-	previewTrack: (service: SourceService, track: SourceTrack, exact = false) =>
+	previewTrack: (service: AccountService, track: SourceTrack, exact = false) =>
 		request<{ preview: TrackPreview | null }>('POST', `/api/preview/${service}${exact ? '?exact=1' : ''}`, track),
 	movePlaylist: (id: number, folderId: number | null) => request('PATCH', `/api/playlists/${id}`, { folderId }),
 	search: (service: SourceService, query: string) => request<SourceTrack[]>('POST', `/api/search/${service}`, { query }),

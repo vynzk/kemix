@@ -1,10 +1,11 @@
-import type { AudioQuality, DownloadService, QualityLevel, SourceService } from '@kemix/core'
+import type { AccountService, AudioQuality, DownloadService, OutputFormat, QualityLevel } from '@kemix/core'
 
-export const SERVICE_LABEL: Record<SourceService | DownloadService, string> = {
+export const SERVICE_LABEL: Record<AccountService | DownloadService, string> = {
 	spotify: 'Spotify',
 	ytmusic: 'YouTube Music',
 	qobuz: 'Qobuz',
 	deezer: 'Deezer',
+	soundeo: 'Soundeo',
 	youtube: 'YouTube',
 	soundcloud: 'SoundCloud'
 }
@@ -45,37 +46,10 @@ export function qualityLabel(q: AudioQuality | null | undefined): string {
 	return q.bitrateKbps ? `${codec} ${q.bitrateKbps} kbps` : codec
 }
 
-/** Download quality choices, best first. The UI keeps @kemix/core type-only, so the list lives here too. */
-export const QUALITY_LEVEL_OPTIONS: { value: QualityLevel; label: string; hint: string }[] = [
-	{ value: 'max', label: 'Máxima disponible', hint: 'Qobuz hasta FLAC 24-bit/192 kHz; Deezer FLAC 16-bit/44.1 kHz.' },
-	{ value: 'hires96', label: 'Hi-Res hasta 24-bit/96 kHz', hint: 'Qobuz FLAC hasta 24-bit/96 kHz; Deezer FLAC 16-bit/44.1 kHz.' },
-	{ value: 'cd', label: 'CD (FLAC 16-bit/44.1 kHz)', hint: 'Sin pérdida, en archivos más chicos que Hi-Res.' },
-	{ value: 'mp3_320', label: 'MP3 320 kbps', hint: 'Con pérdida. Ocupa unas 3 veces menos que FLAC CD.' },
-	{ value: 'mp3_128', label: 'MP3 128 kbps', hint: 'Con pérdida. Qobuz no baja de MP3 320: ahí se descarga en 320.' },
-	{
-		value: 'mp3_compat',
-		label: 'MP3 compatible (cualquier reproductor)',
-		hint:
-			'Siempre MP3, venga de donde venga: si el servicio lo entrega en otro formato (FLAC, AAC de YouTube, Opus) se ' +
-			'convierte a MP3 de 320 kbps (192 kbps si el original ya tenía pérdida). Sirve para el auto, parlantes, ' +
-			'celulares viejos o cualquier programa. La primera vez que hay que convertir, Kemix baja ffmpeg (unos 30 MB).'
-	}
-]
-
-/** Levels each service can tell apart, best first; the others come out the same as one of these. */
-const SERVICE_LEVELS: Record<DownloadService, QualityLevel[]> = {
-	qobuz: ['max', 'hires96', 'cd', 'mp3_320', 'mp3_compat'],
-	deezer: ['max', 'mp3_320', 'mp3_128', 'mp3_compat'],
-	youtube: ['max', 'mp3_compat'],
-	soundcloud: ['max', 'mp3_compat']
-}
-
-/** What 'max' gives on each service when the account's own limit isn't known (yet). */
-const SERVICE_MAX_LABEL: Record<DownloadService, string> = {
-	qobuz: 'Máxima (hasta FLAC 24-bit/192 kHz)',
-	deezer: 'Máxima (FLAC 16-bit/44.1 kHz)',
-	youtube: 'AAC ~128 kbps, 256 con Premium (única calidad)',
-	soundcloud: 'La mejor que tenga (hasta AAC 160 kbps u original)'
+/** The label, plus what the file was converted from: "AIFF 16-bit/44.1 kHz (convertido desde MP3 320 kbps)". */
+export function qualityDetail(q: AudioQuality | null | undefined): string {
+	if (!q) return ''
+	return q.convertedFrom ? `${qualityLabel(q)} (convertido desde ${qualityLabel(q.convertedFrom)})` : qualityLabel(q)
 }
 
 /** Mirrors `serviceQualityLevel` in @kemix/core (the UI only imports types from it). */
@@ -84,6 +58,7 @@ function serviceLevel(service: DownloadService, level: QualityLevel): QualityLev
 	if (level === 'mp3_compat') return level
 	if (isLossy(service)) return 'max'
 	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
+	if (service === 'soundeo') return level === 'mp3_320' || level === 'mp3_128' ? 'mp3_320' : 'max'
 	return level === 'mp3_128' ? 'mp3_320' : level
 }
 
@@ -96,26 +71,7 @@ function qualityRank(q: AudioQuality): number {
 	return (q.sampleRateHz ?? 96000) <= 96000 ? 4 : 5
 }
 
-/**
- * Quality choices when downloading from `service`: only the levels it can tell apart, and none above what the
- * account gets (`account`, its best quality, when known). 'Máxima' and 'MP3 compatible' are always there.
- */
-export function providerQualityOptions(service: DownloadService, account?: AudioQuality): { value: QualityLevel; label: string }[] {
-	const rank = account && !isLossy(service) ? qualityRank(account) : Infinity
-	return SERVICE_LEVELS[service]
-		.filter((l) => l === 'max' || l === 'mp3_compat' || LEVEL_RANK[l] < rank)
-		.map((l) => ({
-			value: l,
-			label:
-				l !== 'max'
-					? QUALITY_LEVEL_OPTIONS.find((o) => o.value === l)!.label
-					: account && !isLossy(service)
-						? `Máxima: ${qualityLabel(account)}`
-						: SERVICE_MAX_LABEL[service]
-		}))
-}
-
-/** `level` as it comes out on `service` with that account: always one of `providerQualityOptions`' values. */
+/** `level` as it comes out on `service` with that account: levels it cannot tell apart, or above the account, become another. */
 export function fitQualityLevel(service: DownloadService, level: QualityLevel, account?: AudioQuality): QualityLevel {
 	const l = serviceLevel(service, level)
 	return account && l !== 'max' && l !== 'mp3_compat' && LEVEL_RANK[l] >= qualityRank(account) ? 'max' : l
@@ -161,20 +117,162 @@ export function qualityTier(q: AudioQuality): QualityTier {
 	return (q.bitDepth ?? 16) > 16 || (q.sampleRateHz ?? 44100) > 48000 ? 'hires' : 'cd'
 }
 
-/** Hi-res (above CD quality) gets its own colour. */
+// ---------- the "Calidad y formato" selector ----------
+
+/** One choice of the "Calidad y formato" selector: the quality to download in, and the format to save the file as. */
+export interface DownloadPreset {
+	level: QualityLevel
+	format: OutputFormat
+	label: string
+	group: string
+}
+
+const GROUP = {
+	original: 'Sin convertir',
+	aiff: 'AIFF · sin pérdida, para DJ',
+	wav: 'WAV · sin pérdida',
+	mp3: 'MP3 · con pérdida'
+}
+
+/**
+ * Every choice, best first within each group. AIFF/WAV keep the bits and kHz of what's downloaded, so their own
+ * levels matter (older CDJs don't read hi-res). "MP3 320 kbps" is the always-an-MP3 level ('mp3_compat').
+ */
+export const DOWNLOAD_PRESETS: DownloadPreset[] = [
+	{ level: 'max', format: 'original', group: GROUP.original, label: 'FLAC · máxima disponible' },
+	{ level: 'hires96', format: 'original', group: GROUP.original, label: 'FLAC · hasta 24-bit/96 kHz' },
+	{ level: 'cd', format: 'original', group: GROUP.original, label: 'FLAC · CD 16-bit/44.1 kHz' },
+	{ level: 'max', format: 'aiff', group: GROUP.aiff, label: 'AIFF · máxima disponible' },
+	{ level: 'hires96', format: 'aiff', group: GROUP.aiff, label: 'AIFF · hasta 24-bit/96 kHz' },
+	{ level: 'cd', format: 'aiff', group: GROUP.aiff, label: 'AIFF · 16-bit/44.1 kHz' },
+	{ level: 'max', format: 'wav', group: GROUP.wav, label: 'WAV · máxima disponible' },
+	{ level: 'hires96', format: 'wav', group: GROUP.wav, label: 'WAV · hasta 24-bit/96 kHz' },
+	{ level: 'cd', format: 'wav', group: GROUP.wav, label: 'WAV · 16-bit/44.1 kHz' },
+	{ level: 'mp3_compat', format: 'original', group: GROUP.mp3, label: 'MP3 320 kbps' },
+	{ level: 'mp3_128', format: 'original', group: GROUP.mp3, label: 'MP3 128 kbps' }
+]
+
+export const presetKey = (p: { level: QualityLevel; format: OutputFormat }) => `${p.level}:${p.format}`
+
+/** The choice for a level and format (as stored in settings); a combination that isn't on the list gets the closest. */
+export function findPreset(level: QualityLevel, format: OutputFormat): DownloadPreset {
+	// Plain MP3 320 (from before the selector merged them) comes out as "MP3 320 kbps".
+	const l = level === 'mp3_320' ? 'mp3_compat' : level
+	return (
+		DOWNLOAD_PRESETS.find((p) => p.level === l && p.format === format) ??
+		DOWNLOAD_PRESETS.find((p) => p.level === l) ??
+		DOWNLOAD_PRESETS.find((p) => p.format === format) ??
+		DOWNLOAD_PRESETS[0]!
+	)
+}
+
+/** The choices grouped for <optgroup>s, in order. */
+export function groupPresets(presets: DownloadPreset[]): [string, DownloadPreset[]][] {
+	const groups = new Map<string, DownloadPreset[]>()
+	for (const p of presets) groups.set(p.group, [...(groups.get(p.group) ?? []), p])
+	return [...groups]
+}
+
+/**
+ * What a choice comes out as on `service`: levels it can't tell apart count as one, and so does Qobuz/Deezer's own
+ * MP3 whether or not "always MP3" was asked for (it's the same file).
+ */
+function outcome(service: DownloadService, p: DownloadPreset, account?: AudioQuality): string {
+	let level = fitQualityLevel(service, p.level, account)
+	if (level === 'mp3_compat' && !isLossy(service)) level = fitQualityLevel(service, 'mp3_320', account)
+	return `${level}:${p.format}`
+}
+
+/**
+ * The choices when downloading from `service`: one per different result with that service and account, so it never
+ * offers what it can't give. Without a service (automatic), all of them.
+ */
+export function presetOptions(service?: DownloadService, account?: AudioQuality): DownloadPreset[] {
+	if (!service) return DOWNLOAD_PRESETS
+	const seen = new Set<string>()
+	const out: DownloadPreset[] = []
+	for (const p of DOWNLOAD_PRESETS) {
+		const key = outcome(service, p, account)
+		if (seen.has(key)) continue
+		seen.add(key)
+		if (p.level !== 'max' || p.format !== 'original') out.push(p)
+		else {
+			const max = account && !isLossy(service) ? qualityLabel(account) : SERVICE_MAX_SHORT[service]
+			const upTo = service === 'qobuz' && account?.lossless ? 'hasta ' : ''
+			out.push({ ...p, label: `Sin convertir · ${upTo}${max}` })
+		}
+	}
+	return out
+}
+
+/** What the best quality gives on each service when the account's own limit isn't known (yet). */
+const SERVICE_MAX_SHORT: Record<DownloadService, string> = {
+	qobuz: 'hasta FLAC 24-bit/192 kHz',
+	deezer: 'FLAC 16-bit/44.1 kHz',
+	soundeo: 'WAV 16-bit/44.1 kHz',
+	youtube: 'AAC ~128 kbps (256 con Premium)',
+	soundcloud: 'hasta AAC 160 kbps u original'
+}
+
+/** `preset` as it comes out on `service`: always one of `presetOptions(service, account)`. */
+export function fitPreset(service: DownloadService, preset: DownloadPreset, account?: AudioQuality): DownloadPreset {
+	const key = outcome(service, preset, account)
+	const options = presetOptions(service, account)
+	return options.find((p) => outcome(service, p, account) === key) ?? options[0]!
+}
+
+// ---------- conversions and their warning ----------
+
+/** What a choice converts the downloads to; null: they're saved as the service delivers them. */
+export type ConversionTarget = 'aiff' | 'wav' | 'mp3'
+
+export function conversionTarget(level: QualityLevel, format: OutputFormat): ConversionTarget | null {
+	if (format !== 'original') return format
+	return level === 'mp3_compat' ? 'mp3' : null
+}
+
+export const TARGET_LABEL: Record<ConversionTarget, string> = { aiff: 'AIFF', wav: 'WAV', mp3: 'MP3 320' }
+
+/**
+ * The file a download of quality `q` ends up as in `format`. Mirrors the queue: AIFF/WAV keep the sample rate, in
+ * 24-bit only when there are more than 16 bits to keep. (MP3 is already part of `expectedQuality`.)
+ */
+export function outputQuality(format: OutputFormat, q: AudioQuality): AudioQuality {
+	if (format === 'original') return q
+	const bitDepth = q.lossless && (q.bitDepth ?? 16) > 16 ? 24 : 16
+	return { codec: format, lossless: true, bitDepth, sampleRateHz: q.sampleRateHz ?? 44100, convertedFrom: q }
+}
+
+/**
+ * Whether what will be downloaded (`q`, after the MP3 conversion if any) falls short of the conversion asked for:
+ * lossy audio for AIFF/WAV (converting doesn't bring the quality back), under 320 kbps for MP3 320.
+ */
+export function belowTarget(target: ConversionTarget | null, q: AudioQuality): boolean {
+	if (target === 'aiff' || target === 'wav') return !q.lossless
+	if (target === 'mp3') return !q.lossless && (q.bitrateKbps ?? 0) < 320
+	return false
+}
+
+/** The warning, in a few words. */
+export function belowTargetShort(target: ConversionTarget): string {
+	return target === 'mp3' ? 'Menos de 320 kbps' : 'Fuente con pérdida'
+}
+
+/** Hi-res (above CD quality) gets its own colour; lossy (or converted from lossy) audio, a warning one. */
 export function qualityTone(q: AudioQuality | null | undefined): string {
 	if (!q) return 'text-muted'
-	if (!q.lossless) return 'text-amber-300'
+	if (!q.lossless || (q.convertedFrom && !q.convertedFrom.lossless)) return 'text-amber-300'
 	if ((q.bitDepth ?? 16) > 16 || (q.sampleRateHz ?? 44100) > 48000) return 'text-sky-300'
 	return 'text-emerald-300'
 }
 
-export const SERVICE_COLOR: Record<SourceService, string> = {
+export const SERVICE_COLOR: Record<AccountService, string> = {
 	spotify: '#1ed760',
 	ytmusic: '#ff3b30',
 	qobuz: '#4b8bf5',
 	deezer: '#a238ff',
-	soundcloud: '#ff5500'
+	soundcloud: '#ff5500',
+	soundeo: '#f5a623'
 }
 
 export function duration(ms: number | null | undefined) {

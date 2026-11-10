@@ -1,22 +1,38 @@
 // Shared domain + API types. The UI imports these as type-only, so keep this file free of runtime deps.
 
+/** Services playlists are imported from (and searched, and created in). */
 export type SourceService = 'spotify' | 'ytmusic' | 'qobuz' | 'deezer' | 'soundcloud'
-/** Lossless download services, tried in the user's priority order. */
-export type TargetService = 'qobuz' | 'deezer'
+/** Services with an account in Kemix: the sources, plus Soundeo, which only downloads (it has no playlists). */
+export type AccountService = SourceService | 'soundeo'
+/**
+ * Download services that need an account, tried in the user's priority order: lossless where the account allows it.
+ * Soundeo only downloads with Premium, and each new track uses one of the plan's daily downloads.
+ */
+export type TargetService = 'qobuz' | 'deezer' | 'soundeo'
 /** Lossy download services: need no account (they go through yt-dlp) and are only used when the user asks for them. */
 export type LossyService = 'youtube' | 'soundcloud'
 /** Everything a track can be downloaded from. */
 export type DownloadService = TargetService | LossyService
 
 export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer', 'soundcloud']
-export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer']
+export const ACCOUNT_SERVICES: AccountService[] = [...SOURCE_SERVICES, 'soundeo']
+export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer', 'soundeo']
 export const LOSSY_SERVICES: LossyService[] = ['youtube', 'soundcloud']
-export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'youtube', 'soundcloud']
+export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'youtube', 'soundcloud']
 export const DOWNLOAD_SERVICE_LABEL: Record<DownloadService, string> = {
 	qobuz: 'Qobuz',
 	deezer: 'Deezer',
+	soundeo: 'Soundeo',
 	youtube: 'YouTube',
 	soundcloud: 'SoundCloud'
+}
+
+export function isSourceService(s: unknown): s is SourceService {
+	return typeof s === 'string' && (SOURCE_SERVICES as string[]).includes(s)
+}
+
+export function isAccountService(s: unknown): s is AccountService {
+	return typeof s === 'string' && (ACCOUNT_SERVICES as string[]).includes(s)
 }
 
 export function isLossyService(s: string): s is LossyService {
@@ -54,8 +70,8 @@ export interface SourceTrack {
 
 /**
  * Quality to download in: the best the service has, or a ceiling. Each service gives the best it has up to it.
- * Qobuz has nothing below MP3 320, Deezer has a single lossless format (16-bit/44.1 kHz), and YouTube and SoundCloud
- * always give their one audio format.
+ * Qobuz has nothing below MP3 320, Deezer has a single lossless format (16-bit/44.1 kHz), Soundeo has its WAV/AIFF
+ * (16-bit/44.1 kHz) and MP3 320, and YouTube and SoundCloud always give their one audio format.
  * `mp3_compat` is always an MP3, from any service: Qobuz/Deezer send their MP3 and anything else (YouTube's AAC/Opus,
  * a FLAC) is converted with ffmpeg, so the file plays on any player.
  */
@@ -75,7 +91,21 @@ export function serviceQualityLevel(service: DownloadService, level: QualityLeve
 	if (level === 'mp3_compat') return isLossyService(service) ? 'mp3_compat' : serviceQualityLevel(service, 'mp3_320')
 	if (isLossyService(service)) return 'max'
 	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
+	// Soundeo: one lossless file (its WAV, or the AIFF made from it) and one MP3 (320).
+	if (service === 'soundeo') return level === 'mp3_320' || level === 'mp3_128' ? 'mp3_320' : 'max'
 	return level === 'mp3_128' ? 'mp3_320' : level
+}
+
+/**
+ * Format the file is saved in: as the service delivers it, or converted after downloading (with ffmpeg) to the
+ * uncompressed formats DJ software and producers use. AIFF/WAV keep the sample rate and bit depth of what was
+ * downloaded. (MP3 for any player is a quality level, 'mp3_compat'.)
+ */
+export type OutputFormat = 'original' | 'aiff' | 'wav'
+export const OUTPUT_FORMATS: OutputFormat[] = ['original', 'aiff', 'wav']
+
+export function isOutputFormat(s: unknown): s is OutputFormat {
+	return typeof s === 'string' && (OUTPUT_FORMATS as string[]).includes(s)
 }
 
 /** Audio quality of a stream or file. */
@@ -85,6 +115,8 @@ export interface AudioQuality {
 	bitDepth?: number
 	sampleRateHz?: number
 	bitrateKbps?: number
+	/** Quality of what was downloaded, when the file was converted from it (an AIFF made from an MP3 isn't lossless). */
+	convertedFrom?: AudioQuality
 }
 
 /** A track as it exists on a download (target) service. */
@@ -125,7 +157,7 @@ export type DownloadStatus =
 export type AccountStatus = 'connected' | 'disconnected' | 'error'
 
 export interface AccountInfo {
-	service: SourceService
+	service: AccountService
 	status: AccountStatus
 	displayName?: string | null
 	/** Email of the connected account, when the service exposes it. */
@@ -138,12 +170,25 @@ export interface AccountIdentity {
 	email?: string
 }
 
+/** A Soundeo account right now: whether it can download (Premium) and how many tracks it has left today. */
+export interface SoundeoStatus {
+	premium: boolean
+	/** Downloads left today from the plan (reset every midnight, Central European Time). */
+	downloadsLeft: number | null
+	/** Bonus downloads, usable any day while the account has Premium. */
+	bonusLeft: number | null
+	/** Time until the plan's downloads are reset, e.g. "6 h 57 min". */
+	resetsIn: string | null
+}
+
 export interface Settings {
 	downloadDir: string
 	/** Services tried, in order, when a download has no provider chosen. YouTube/SoundCloud (lossy) only if the user adds them. */
 	servicePriority: DownloadService[]
 	/** Default quality for downloads; each download can pick another. */
 	downloadQuality: QualityLevel
+	/** Default file format for downloads; each download can pick another. */
+	outputFormat: OutputFormat
 	concurrency: number
 	autoAcceptThreshold: number
 	spotifyClientId: string
@@ -235,7 +280,7 @@ export interface StreamPreview {
 export type TrackPreview =
 	| ({ kind: 'youtube' } & YouTubePreview)
 	| { kind: 'soundcloud'; url: string; title: string }
-	| ({ kind: 'stream'; service: SourceService; title: string } & StreamPreview)
+	| ({ kind: 'stream'; service: AccountService; title: string } & StreamPreview)
 
 export interface DownloadRow {
 	id: number

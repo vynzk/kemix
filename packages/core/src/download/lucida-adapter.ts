@@ -4,7 +4,7 @@ import Qobuz from 'lucida/streamers/qobuz/main.js'
 import Deezer from 'lucida/streamers/deezer/main.js'
 import { parseTrack as parseQobuzTrack, type RawTrack as LucidaRawQobuzTrack } from 'lucida/streamers/qobuz/parse.js'
 import type { Track as LucidaTrack, CoverArtwork, GetStreamResponse } from 'lucida/types'
-import type { AudioQuality, DownloadService, QualityLevel, SourceTrack, TargetService, TargetTrack } from '../types'
+import type { AudioQuality, DownloadService, OutputFormat, QualityLevel, SourceTrack, TargetTrack } from '../types'
 import { QobuzApi } from '../sources/qobuz'
 import { DeezerSource } from '../sources/deezer'
 
@@ -24,12 +24,18 @@ export interface Downloader {
 	 * YouTube video): no search needed, and no search can do better.
 	 */
 	exact?(track: SourceTrack & { source?: string }): TargetTrack | null
-	/** `open` gives the best audio the track has up to `level`. */
-	getTrack(url: string): Promise<{ meta: TargetTrack; open(level: QualityLevel): Promise<AudioStream> }>
+	/**
+	 * `open` gives the best audio the track has up to `level`. `format` is the file format the download will be saved
+	 * in: services that deliver it themselves (Soundeo's AIFF and WAV) send it, so there's nothing to convert.
+	 */
+	getTrack(url: string): Promise<{ meta: TargetTrack; open(level: QualityLevel, format?: OutputFormat): Promise<AudioStream> }>
 	accountInfo(): Promise<{ premium?: boolean; country?: string }>
 	/** Best quality this account can download (the subscription's ceiling, not a specific track's). */
 	accountQuality(): Promise<AudioQuality>
 }
+
+/** The services downloaded through lucida. */
+type LucidaService = 'qobuz' | 'deezer'
 
 const HIRES_MAX: AudioQuality = { codec: 'flac', lossless: true, bitDepth: 24, sampleRateHz: 192000 }
 const CD_QUALITY: AudioQuality = { codec: 'flac', lossless: true, bitDepth: 16, sampleRateHz: 44100 }
@@ -38,7 +44,7 @@ abstract class LucidaDownloader implements Downloader {
 	abstract accountQuality(): Promise<AudioQuality>
 
 	constructor(
-		readonly service: TargetService,
+		readonly service: LucidaService,
 		protected streamer: Qobuz | Deezer
 	) {}
 
@@ -282,7 +288,7 @@ function bestCover(...lists: (CoverArtwork[] | undefined)[]): string | undefined
 	return all.sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]!.url
 }
 
-function toTarget(service: TargetService, t: LucidaTrack): TargetTrack {
+function toTarget(service: LucidaService, t: LucidaTrack): TargetTrack {
 	const releaseDate = t.releaseDate ?? t.album?.releaseDate
 	const year = releaseDate ? new Date(releaseDate).getFullYear() : undefined
 	return {

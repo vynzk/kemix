@@ -2,8 +2,19 @@ import type { Db } from './db'
 import type { EventBus } from './events'
 import type { SecretStore } from './secrets'
 import type { SettingsStore } from './settings'
-import type { AccountInfo, AccountStatus, AudioQuality, DownloadService, SourceService, SourceTrack, TargetService } from './types'
-import { DOWNLOAD_SERVICES, isLossyService, SOURCE_SERVICES } from './types'
+import type {
+	AccountInfo,
+	AccountService,
+	AccountStatus,
+	AudioQuality,
+	DownloadService,
+	SoundeoStatus,
+	SourceService,
+	SourceTrack,
+	StreamPreview,
+	TargetService
+} from './types'
+import { ACCOUNT_SERVICES, DOWNLOAD_SERVICES, isLossyService, isSourceService } from './types'
 import type { SourceConnector } from './sources/types'
 import { QobuzApi, QobuzSource, scrapeQobuzAppCredentials, type QobuzCredentials } from './sources/qobuz'
 import { parseQobuzSession } from './sources/qobuz-session'
@@ -21,6 +32,7 @@ import { YouTube } from './sources/youtube'
 import { SoundCloud } from './sources/soundcloud'
 import { extractSoundCloudToken, SoundCloudSource } from './sources/soundcloud-api'
 import { ManagedYtDlp, YtDlp } from './sources/yt-dlp'
+import { SoundeoApi, SoundeoDownloader, type SoundeoAccountState } from './sources/soundeo'
 import { createDeezerDownloader, createQobuzDownloader, type Downloader } from './download/lucida-adapter'
 import { errorMessage, now } from './util'
 
@@ -43,10 +55,27 @@ interface SoundCloudSecret {
 	token: string
 }
 
+/**
+ * Soundeo has no tokens: the session is a set of cookies, and it ends now and then. The password is kept (encrypted,
+ * like every secret) to sign in again without asking.
+ */
+interface SoundeoSecret {
+	email: string
+	password: string
+	cookies: Record<string, string>
+}
+
 interface YtMusicSecret {
 	cookie: string
 	/** Which signed-in Google account in the cookies to use (authuser). Missing in older connections = 0. */
 	accountIndex?: number
+}
+
+/** How a Soundeo account shows next to its email. */
+const soundeoPlan = (premium: boolean) => (premium ? 'Premium' : 'sin Premium')
+
+function toSoundeoStatus(s: SoundeoAccountState): SoundeoStatus {
+	return { premium: s.premium, downloadsLeft: s.downloadsLeft, bonusLeft: s.bonusLeft, resetsIn: s.resetsIn }
 }
 
 /** Run one step of a multi-step connection, prefixing any error with the step's name. */
@@ -123,14 +152,14 @@ export class Accounts {
 
 	list(): AccountInfo[] {
 		const rows = this.db.prepare('SELECT service, display_name, email, status, error FROM accounts').all() as {
-			service: SourceService
+			service: AccountService
 			display_name: string | null
 			email: string | null
 			status: AccountStatus
 			error: string | null
 		}[]
 		const byService = new Map(rows.map((r) => [r.service, r]))
-		return SOURCE_SERVICES.map((service) => {
+		return ACCOUNT_SERVICES.map((service) => {
 			const r = byService.get(service)
 			return {
 				service,
@@ -142,7 +171,7 @@ export class Accounts {
 		})
 	}
 
-	isConnected(service: SourceService) {
+	isConnected(service: AccountService) {
 		return this.list().find((a) => a.service === service)?.status === 'connected'
 	}
 
@@ -151,7 +180,7 @@ export class Accounts {
 	 * an error keeps the previous identity so the user still sees which account broke.
 	 */
 	#setStatus(
-		service: SourceService,
+		service: AccountService,
 		status: AccountStatus,
 		info: { name?: string | null; email?: string | null; error?: string | null } = {}
 	) {
@@ -173,7 +202,7 @@ export class Accounts {
 	 * (they'd otherwise linger as "removed"). Downloaded files stay on disk and in the files index, so they are
 	 * reused if the same tracks are downloaded again.
 	 */
-	#forgetPreviousAccount(service: SourceService, next: { name?: string | null; email?: string | null }) {
+	#forgetPreviousAccount(service: AccountService, next: { name?: string | null; email?: string | null }) {
 		const prev = this.db.prepare('SELECT display_name, email FROM accounts WHERE service = ?').get(service) as
 			| { display_name: string | null; email: string | null }
 			| undefined
@@ -193,7 +222,7 @@ export class Accounts {
 	 */
 	async refreshIdentities() {
 		for (const a of this.list()) {
-			if (a.status !== 'connected' || a.email) continue
+			if (a.status !== 'connected' || a.email || !isSourceService(a.service)) continue
 			try {
 				const id = await this.source(a.service).identity()
 				if (!id.email && !id.name) continue
@@ -208,21 +237,26 @@ export class Accounts {
 	}
 
 	/** Mark an account as broken (e.g. expired token) so the UI asks the user to reconnect. */
-	reportError(service: SourceService, err: unknown) {
+	reportError(service: AccountService, err: unknown) {
 		this.#setStatus(service, 'error', { error: errorMessage(err) })
-		this.#sources.delete(service)
-		if (service === 'qobuz' || service === 'deezer') this.#downloaders.delete(service)
+		this.#forgetClients(service)
 	}
 
-	disconnect(service: SourceService) {
+	disconnect(service: AccountService) {
 		if (service === 'spotify' && this.secrets.get<SpotifySecret>('spotify')?.mode === 'web') {
 			void this.#spotifyWeb?.logout().catch(() => {})
 		}
 		this.secrets.delete(service)
-		this.#sources.delete(service)
-		if (service === 'qobuz' || service === 'deezer') this.#downloaders.delete(service)
+		this.#forgetClients(service)
 		this.db.prepare('DELETE FROM accounts WHERE service = ?').run(service)
 		this.events.emit({ type: 'accounts' })
+	}
+
+	/** Drop the cached clients of an account, so the next use starts from its stored credentials. */
+	#forgetClients(service: AccountService) {
+		if (isSourceService(service)) this.#sources.delete(service)
+		if (service === 'qobuz' || service === 'deezer' || service === 'soundeo') this.#downloaders.delete(service)
+		if (service === 'soundeo') this.#soundeoApi = undefined
 	}
 
 	// ---- Qobuz ----
@@ -319,6 +353,85 @@ export class Accounts {
 			this.#setStatus('soundcloud', 'error', { error: errorMessage(err) })
 			throw err
 		}
+	}
+
+	// ---- Soundeo ----
+
+	#soundeoApi?: SoundeoApi
+
+	/** The signed-in Soundeo client, from the stored session. It signs in again by itself when the session ends. */
+	#soundeo(): SoundeoApi {
+		if (this.#soundeoApi) return this.#soundeoApi
+		const stored = this.secrets.get<SoundeoSecret>('soundeo')
+		if (!stored) throw new Error('Soundeo no está conectado')
+		const api: SoundeoApi = new SoundeoApi({
+			cookies: stored.cookies,
+			credentials: { email: stored.email, password: stored.password },
+			onCookies: (cookies) => {
+				// Only while it's still the connected account (it may have been reconnected or disconnected meanwhile).
+				const current = this.secrets.get<SoundeoSecret>('soundeo')
+				if (current && this.#soundeoApi === api) this.secrets.set('soundeo', { ...current, cookies } satisfies SoundeoSecret)
+			},
+			onSessionLost: (err) => {
+				if (this.#soundeoApi === api) this.reportError('soundeo', err)
+			}
+		})
+		this.#soundeoApi = api
+		return api
+	}
+
+	/**
+	 * Connect a Soundeo account with its email and password. Any account connects, but only Premium ones can download
+	 * (Soundeo sells no single tracks). The first time a Premium account is connected, Soundeo joins the download
+	 * priority after the other lossless services, so tracks they don't have come from it.
+	 */
+	async connectSoundeo(input: { email: string; password: string }): Promise<SoundeoStatus> {
+		const wasConnected = this.isConnected('soundeo')
+		try {
+			const email = input.email.trim()
+			if (!email || !input.password) throw new Error('Escribe el email y la contraseña de tu cuenta de Soundeo')
+			const api = new SoundeoApi()
+			const state = await step('Iniciar sesión en Soundeo', () => api.login(email, input.password))
+			this.secrets.set('soundeo', { email, password: input.password, cookies: api.cookies() } satisfies SoundeoSecret)
+			this.#forgetClients('soundeo')
+			this.#setStatus('soundeo', 'connected', { name: soundeoPlan(state.premium), email })
+			if (state.premium && !wasConnected) this.#addToPriority('soundeo')
+			return toSoundeoStatus(state)
+		} catch (err) {
+			// Changing credentials failed: the current connection still works, so don't flag it as broken.
+			if (!wasConnected) this.#setStatus('soundeo', 'error', { error: errorMessage(err) })
+			throw err
+		}
+	}
+
+	/** Whether the Soundeo account has Premium now, and how many downloads it has left today. */
+	async soundeoStatus(): Promise<SoundeoStatus> {
+		if (!this.isConnected('soundeo')) throw new Error('Soundeo no está conectado')
+		const state = await this.#soundeo().status()
+		// Premium bought or expired since connecting: keep the account's label in step.
+		const name = soundeoPlan(state.premium)
+		const res = this.db
+			.prepare('UPDATE accounts SET display_name = ? WHERE service = ? AND display_name IS NOT ?')
+			.run(name, 'soundeo', name)
+		if (res.changes) this.events.emit({ type: 'accounts' })
+		return toSoundeoStatus(state)
+	}
+
+	/** Soundeo's clip of a track (needs no account). */
+	async soundeoPreview(trackId: string): Promise<StreamPreview | null> {
+		const api = this.isConnected('soundeo') ? this.#soundeo() : new SoundeoApi()
+		const url = await api.preview(trackId)
+		return url ? { url, full: false } : null
+	}
+
+	/** Put a download service in the priority list, before the lossy ones, unless it's already there. */
+	#addToPriority(service: TargetService) {
+		const priority = this.settings.get().servicePriority
+		if (priority.includes(service)) return
+		const at = priority.findIndex((s) => isLossyService(s))
+		const next = [...priority]
+		next.splice(at < 0 ? next.length : at, 0, service)
+		this.settings.update({ servicePriority: next })
 	}
 
 	// ---- YouTube Music ----
@@ -521,6 +634,7 @@ export class Accounts {
 	}
 
 	async #createDownloader(service: TargetService): Promise<Downloader> {
+		if (service === 'soundeo') return new SoundeoDownloader(this.#soundeo())
 		if (service === 'qobuz') {
 			const c = this.secrets.get<QobuzCredentials>('qobuz')
 			if (!c) throw new Error('Qobuz no está conectado')

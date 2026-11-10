@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, Settings } from '@kemix/core'
 import { api } from '../lib/api'
-import { QUALITY_LEVEL_OPTIONS, SERVICE_LABEL, isLossy } from '../lib/format'
+import { DOWNLOAD_PRESETS, SERVICE_LABEL, findPreset, groupPresets, isLossy, presetKey } from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 /** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
-const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'youtube', 'soundcloud']
+const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'youtube', 'soundcloud']
 
 export function SettingsPage() {
 	const qc = useQueryClient()
@@ -50,7 +50,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
+					hint="En modo automático se busca primero en el de arriba. Soundeo solo baja con Premium, y cada tema nuevo gasta una de las descargas del día de tu plan: ponlo debajo de Qobuz y Deezer para usarlo solo con lo que no esté ahí. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
@@ -90,18 +90,25 @@ export function SettingsPage() {
 					</ol>
 				</Field>
 				<Field
-					label="Calidad de descarga"
-					hint={`${QUALITY_LEVEL_OPTIONS.find((o) => o.value === draft.downloadQuality)?.hint ?? ''} Si un tema no existe en esa calidad, se baja en la mejor que tenga por debajo. Cada playlist puede elegir otra al descargar. YouTube siempre es AAC ~128 kbps, salvo con «MP3 compatible».`}
+					label="Calidad y formato por defecto"
+					hint="Calidad máxima a bajar y formato del archivo. Si un tema no llega a esa calidad, se baja en la mejor que tenga. AIFF, WAV y MP3 se convierten al terminar de bajar, con tags y carátula; la primera vez que hay que convertir, Kemix baja ffmpeg (unos 30 MB). Cada playlist puede elegir otra opción al descargar."
 				>
 					<select
-						value={draft.downloadQuality}
-						onChange={(e) => set('downloadQuality', e.target.value as Settings['downloadQuality'])}
+						value={presetKey(findPreset(draft.downloadQuality, draft.outputFormat))}
+						onChange={(e) => {
+							const p = DOWNLOAD_PRESETS.find((o) => presetKey(o) === e.target.value)
+							if (p) setDraft({ ...draft, downloadQuality: p.level, outputFormat: p.format })
+						}}
 						className="w-full rounded-md border border-line bg-ink px-3 py-2 text-sm"
 					>
-						{QUALITY_LEVEL_OPTIONS.map((o) => (
-							<option key={o.value} value={o.value}>
-								{o.label}
-							</option>
+						{groupPresets(DOWNLOAD_PRESETS).map(([group, list]) => (
+							<optgroup key={group} label={group}>
+								{list.map((o) => (
+									<option key={presetKey(o)} value={presetKey(o)}>
+										{o.label}
+									</option>
+								))}
+							</optgroup>
 						))}
 					</select>
 				</Field>

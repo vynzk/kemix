@@ -10,7 +10,7 @@ import type {
 	SourceTrack,
 	SpotifyWebLogin
 } from '@kemix/core'
-import { SOURCE_SERVICES, isDownloadService, isQualityLevel } from '@kemix/core'
+import { SOURCE_SERVICES, isAccountService, isDownloadService, isOutputFormat, isQualityLevel } from '@kemix/core'
 
 export interface ServerOptions {
 	kemix: Kemix
@@ -131,8 +131,19 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 			return callbackPage('No se pudo conectar Spotify', (err as Error).message)
 		}
 	})
+	// Soundeo only downloads: nothing to import, so no library sync.
+	app.post('/api/accounts/soundeo', async (req) => {
+		const body = req.body as { email?: unknown; password?: unknown } | undefined
+		if (typeof body?.email !== 'string' || typeof body.password !== 'string') {
+			throw Object.assign(new Error('Faltan el email o la contraseña'), { statusCode: 400 })
+		}
+		return kemix.accounts.connectSoundeo({ email: body.email, password: body.password })
+	})
+	app.get('/api/accounts/soundeo', async () => kemix.accounts.soundeoStatus())
 	app.delete('/api/accounts/:service', async (req) => {
-		kemix.accounts.disconnect(service(req.params))
+		const s = (req.params as { service: string }).service
+		if (!isAccountService(s)) throw Object.assign(new Error('Servicio desconocido'), { statusCode: 404 })
+		kemix.accounts.disconnect(s)
 		return { ok: true }
 	})
 
@@ -188,9 +199,10 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		await kemix.library.syncPlaylistTracks(id(req.params), true)
 		return { ok: true }
 	})
-	app.post('/api/playlists/:id/download', async (req) => {
-		const { positions, provider, quality } =
-			(req.body as { positions?: unknown; provider?: unknown; quality?: unknown } | undefined) ?? {}
+	/** What to download (or scan) and how. Positions: undefined = the whole playlist. */
+	const downloadOptions = (body: unknown) => {
+		const { positions, provider, quality, format } =
+			(body as { positions?: unknown; provider?: unknown; quality?: unknown; format?: unknown } | undefined) ?? {}
 		if (positions !== undefined && (!Array.isArray(positions) || !positions.every((n) => Number.isInteger(n)))) {
 			throw Object.assign(new Error('positions inválidas'), { statusCode: 400 })
 		}
@@ -200,19 +212,20 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		if (quality != null && !isQualityLevel(quality)) {
 			throw Object.assign(new Error('Calidad desconocida'), { statusCode: 400 })
 		}
-		await kemix.queue.enqueuePlaylist(id(req.params), positions as number[] | undefined, provider ?? null, quality ?? null)
+		if (format != null && !isOutputFormat(format)) {
+			throw Object.assign(new Error('Formato desconocido'), { statusCode: 400 })
+		}
+		return { positions: positions as number[] | undefined, provider: provider ?? null, level: quality ?? null, format: format ?? null }
+	}
+	app.post('/api/playlists/:id/download', async (req) => {
+		const o = downloadOptions(req.body)
+		await kemix.queue.enqueuePlaylist(id(req.params), o.positions, o.provider, o.level, o.format)
 		return { ok: true }
 	})
 	app.get('/api/playlists/:id/scan', async (req) => ({ scan: kemix.queue.scanState(id(req.params)) }))
 	app.post('/api/playlists/:id/scan', async (req) => {
-		const { positions, provider } = (req.body as { positions?: unknown; provider?: unknown } | undefined) ?? {}
-		if (positions !== undefined && (!Array.isArray(positions) || !positions.every((n) => Number.isInteger(n)))) {
-			throw Object.assign(new Error('positions inválidas'), { statusCode: 400 })
-		}
-		if (provider != null && !isDownloadService(provider)) {
-			throw Object.assign(new Error('Proveedor desconocido'), { statusCode: 400 })
-		}
-		return { scan: await kemix.queue.scanPlaylist(id(req.params), positions as number[] | undefined, provider ?? null) }
+		const o = downloadOptions(req.body)
+		return { scan: await kemix.queue.scanPlaylist(id(req.params), o.positions, o.provider) }
 	})
 	app.patch('/api/playlists/:id', async (req) => {
 		const body = req.body as { folderId: number | null }
@@ -282,7 +295,10 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined
 		}
 		const exact = (req.query as { exact?: string }).exact === '1'
-		return { preview: await kemix.queue.previewTrack(service(req.params), track, exact) }
+		// Soundeo too: its candidates in Review play Soundeo's own clip of that very mix.
+		const from = (req.params as { service: string }).service
+		if (!isAccountService(from)) throw Object.assign(new Error('Servicio desconocido'), { statusCode: 404 })
+		return { preview: await kemix.queue.previewTrack(from, track, exact) }
 	})
 
 	// ---------- downloads ----------
