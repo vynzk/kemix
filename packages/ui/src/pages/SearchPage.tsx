@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { SourceService, SourceTrack } from '@kemix/core'
 import { api } from '../lib/api'
 import { SERVICE_COLOR, SERVICE_LABEL, cx, duration } from '../lib/format'
 import { Button, Cover, Empty, ErrorText, Input, PageHeader } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
+import { GetSongBpmCredit, LookedUpFeatures } from '../components/Features'
+import { useFeatureLookup, useGetSongBpm, useKeyNotation } from '../lib/hooks'
 
 type Drafts = Partial<Record<SourceService, SourceTrack[]>>
 
@@ -39,6 +41,21 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 		enabled: !!service && !!query,
 		staleTime: 5 * 60_000
 	})
+
+	// Key and BPM of the results, filled in as they're found.
+	const lookupItems = useMemo(
+		() =>
+			service
+				? results.data?.map((t) => ({
+						service,
+						track: { sourceId: t.sourceId, title: t.title, artists: t.artists, durationMs: t.durationMs, isrc: t.isrc }
+					}))
+				: undefined,
+		[service, results.data]
+	)
+	const lookingUp = useFeatureLookup('search', lookupItems)
+	const notation = useKeyNotation()
+	const getSongBpm = useGetSongBpm()
 
 	const create = useMutation({
 		mutationFn: async () => {
@@ -144,6 +161,13 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 												{t.album && ` · ${t.album}`}
 											</p>
 										</div>
+										<LookedUpFeatures
+											service={service}
+											sourceId={t.sourceId}
+											notation={notation}
+											pending={lookingUp}
+											className="hidden w-40 shrink-0 justify-end sm:inline-flex"
+										/>
 										<span className="w-12 shrink-0 text-right text-xs text-muted">{duration(t.durationMs ?? null)}</span>
 										<Button
 											variant={added ? 'ghost' : 'default'}
@@ -158,6 +182,7 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 							})}
 						</ul>
 					)}
+					{!!results.data?.length && getSongBpm && <GetSongBpmCredit />}
 				</section>
 
 				<aside className="w-full shrink-0 space-y-3 rounded-lg border border-line bg-panel p-4 lg:sticky lg:top-4 lg:w-80">

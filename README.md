@@ -74,6 +74,27 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   CD, con pérdida, dudosos y no encontrados. Cada grupo se puede seleccionar para descargar solo esos, y "Seleccionar
   sin los con aviso" deja fuera los marcados. Al descargar después se usan esos resultados sin buscar de nuevo. Volver
   a escanear solo busca lo que quedó sin resolver; si un tema que esperaba en Revisión aparece, su descarga sigue sola.
+- **Clave y BPM**: columnas BPM y Clave en cada playlist. La clave se muestra en Camelot con el color de su lugar en
+  la rueda ("8A" y "Am" al lado), en notación musical o en Open Key, según Ajustes. Al abrir una playlist se buscan
+  solos los temas que nunca se buscaron; el botón "Clave y BPM" reintenta los que no tienen datos o, con temas
+  marcados, vuelve a buscar esos desde cero. Cada dato sale del primer lugar que lo tiene:
+  1. los tags del archivo descargado, si ya venían;
+  2. [GetSongBPM](https://getsongbpm.com/api), si pones su API key (gratis) en Ajustes;
+  3. Deezer (su API pública, sin cuenta), solo el BPM;
+  4. el análisis de Kemix: decodifica el audio con ffmpeg y estima el tempo (autocorrelación de los ataques) y la clave
+     (cromagrama comparado con los perfiles de KeyFinder). Usa el archivo descargado o, si el tema no se bajó, la vista
+     previa de 30 s de Deezer (se marca con "≈", es aproximado);
+  5. AcousticBrainz, solo si no hubo audio que analizar: en una prueba con 30 temas de clave conocida acertó menos
+     claves (12 de 26) que el análisis de Kemix con la vista previa (17 de 30).
+
+  También aparecen en los resultados de **Buscar** y en **Revisión**, junto al tema original y a cada opción. El BPM de
+  una opción sale en amarillo si no coincide con el del original (ni al doble ni a la mitad): puede ser otra versión.
+  Esos temas no están en la biblioteca, así que se buscan igual pero sus datos se guardan en memoria hasta cerrar la
+  app; una nueva búsqueda detiene lo que quedaba de la anterior.
+
+  Al terminar cada descarga se analiza el archivo completo si algo venía de una vista previa, y la clave y el BPM se
+  escriben en los tags (TKEY/TBPM o INITIALKEY/BPM, lo que leen rekordbox, Serato y Traktor); se puede desactivar en
+  Ajustes. El BPM de Deezer y el del análisis a veces salen al doble o a la mitad del real.
 - **Buscar y crear playlists**: en "Buscar" eliges un servicio conectado, buscas temas, los agregas a una playlist nueva
   (con orden) y se crea como privada en tu cuenta de ese servicio; luego aparece en la Biblioteca. Spotify pide permiso
   de escritura: las conexiones hechas antes de esta función deben desconectarse y volver a conectarse.

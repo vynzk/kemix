@@ -156,8 +156,38 @@ export function mp3Args(input: string, output: string, lossless: boolean): strin
 	]
 }
 
+/** Decodes audio for analysis (key and BPM). */
+export interface AudioDecoder {
+	/**
+	 * The audio of `input` (a file path, or a whole file's bytes) as mono 32-bit float samples at `sampleRate`, at most
+	 * the first `maxSeconds`.
+	 */
+	decodePcm(input: string | Buffer, opts: { sampleRate: number; maxSeconds?: number; signal?: AbortSignal }): Promise<Float32Array>
+}
+
+/**
+ * Arguments to decode `input` (a path, or 'pipe:0' for bytes on stdin) to raw mono float samples on stdout, resampled
+ * to `sampleRate`.
+ */
+export function pcmDecodeArgs(input: string, sampleRate: number, maxSeconds?: number): string[] {
+	return [
+		'-hide_banner',
+		// Reading the input from stdin needs stdin.
+		...(input === 'pipe:0' ? [] : ['-nostdin']),
+		'-loglevel', 'error',
+		'-i', input,
+		'-map', '0:a:0',
+		'-vn',
+		...(maxSeconds ? ['-t', String(maxSeconds)] : []),
+		'-ac', '1',
+		'-ar', String(sampleRate),
+		'-f', 'f32le',
+		'pipe:1'
+	]
+}
+
 /** ffmpeg: Kemix's own copy (downloaded on first use), else one on the PATH. */
-export class Ffmpeg implements AudioConverter {
+export class Ffmpeg implements AudioConverter, AudioDecoder {
 	#bin?: Promise<string>
 
 	constructor(private managed?: ManagedFfmpeg) {}
@@ -175,7 +205,8 @@ export class Ffmpeg implements AudioConverter {
 		}
 		if (await runs('ffmpeg')) return 'ffmpeg'
 		throw new Error(
-			`${managedError}Para convertir a MP3, AIFF o WAV Kemix baja ffmpeg la primera vez (hace falta conexión a ` +
+			`${managedError}Para convertir a MP3, AIFF o WAV, y para analizar la clave y el BPM, Kemix baja ffmpeg la ` +
+				'primera vez (hace falta conexión a ' +
 				'internet). Si no puede, instala ffmpeg en el sistema (https://ffmpeg.org).'
 		)
 	}
@@ -194,6 +225,37 @@ export class Ffmpeg implements AudioConverter {
 
 	toPcm(input: string, output: string, opts: { format: PcmFormat; bitDepth: 16 | 24; signal?: AbortSignal }) {
 		return this.#run(pcmArgs(input, output, opts.format, opts.bitDepth), opts.format.toUpperCase(), opts.signal)
+	}
+
+	async decodePcm(
+		input: string | Buffer,
+		opts: { sampleRate: number; maxSeconds?: number; signal?: AbortSignal }
+	): Promise<Float32Array> {
+		const bin = await this.bin()
+		opts.signal?.throwIfAborted()
+		const fromStdin = typeof input !== 'string'
+		const args = pcmDecodeArgs(fromStdin ? 'pipe:0' : input, opts.sampleRate, opts.maxSeconds)
+		const bytes = await new Promise<Buffer>((resolve, reject) => {
+			const child = spawn(bin, args, { windowsHide: true, signal: opts.signal })
+			const chunks: Buffer[] = []
+			let stderr = ''
+			child.stdout.on('data', (d: Buffer) => chunks.push(d))
+			child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)))
+			child.on('error', reject)
+			child.on('close', (code) => {
+				if (code === 0) resolve(Buffer.concat(chunks))
+				else reject(new Error(`No se pudo leer el audio: ${stderr.trim().split('\n').pop() || `código ${code}`}`))
+			})
+			if (fromStdin) {
+				// ffmpeg may stop reading early (e.g. at maxSeconds): that's not an error.
+				child.stdin.on('error', () => {})
+				child.stdin.end(input)
+			}
+		})
+		// Copy into an aligned buffer: Buffer.concat may hand back a slice of a shared pool at any offset.
+		const samples = new Float32Array(Math.floor(bytes.length / 4))
+		new Uint8Array(samples.buffer).set(bytes.subarray(0, samples.length * 4))
+		return samples
 	}
 
 	async #run(args: string[], target: string, signal?: AbortSignal) {

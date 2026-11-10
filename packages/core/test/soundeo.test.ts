@@ -396,6 +396,8 @@ describe('Soundeo account', () => {
 	beforeEach(() => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kemix-soundeo-'))
 		kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test') })
+		// Key and BPM analysis after each download has its own tests (features-analyzer.test.ts).
+		Object.assign(kemix.features, { trackDownloaded: () => {} })
 	})
 
 	afterEach(() => {
@@ -506,6 +508,7 @@ describe('queue with Soundeo', () => {
 		asked = []
 		kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test'), converter })
 		kemix.settings.update({ downloadDir: path.join(dir, 'music') })
+		Object.assign(kemix.features, { trackDownloaded: () => {} })
 		const soundeo: Downloader = {
 			service: 'soundeo',
 			isrcLookup: async () => null,

@@ -44,6 +44,37 @@ export function writeTags(filePath: string, meta: TargetTrack, cover?: Buffer) {
 	}
 }
 
+/**
+ * Write the BPM (TBPM / BPM, a whole number as the tag requires) and the key (TKEY / INITIALKEY, written "Am", "F#")
+ * into an audio file, for DJ software. Only what's given is written.
+ */
+export function writeKeyBpm(filePath: string, values: { bpm?: number | null; key?: string | null }) {
+	if (!values.bpm && !values.key) return
+	const file = File.createFromPath(filePath)
+	try {
+		if (values.bpm) file.tag.beatsPerMinute = Math.round(values.bpm)
+		if (values.key) file.tag.initialKey = values.key
+		file.save()
+	} finally {
+		file.dispose()
+	}
+}
+
+/** The BPM and key a file's tags already carry (some downloads come with them), if any. */
+export function readKeyBpm(filePath: string): { bpm: number | null; key: string | null } {
+	try {
+		const file = File.createFromPath(filePath)
+		try {
+			const bpm = file.tag.beatsPerMinute
+			return { bpm: bpm > 0 ? bpm : null, key: file.tag.initialKey?.trim() || null }
+		} finally {
+			file.dispose()
+		}
+	} catch {
+		return { bpm: null, key: null }
+	}
+}
+
 /** Copy tags and cover art from one audio file to another (a file converted from an earlier download). */
 export function copyTags(fromPath: string, toPath: string) {
 	const from = File.createFromPath(fromPath)

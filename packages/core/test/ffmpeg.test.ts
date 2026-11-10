@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { File } from 'node-taglib-sharp'
-import { Ffmpeg, ffmpegAsset, mp3Args, pcmArgs, pcmBitDepth } from '../src/download/ffmpeg'
+import { Ffmpeg, ffmpegAsset, mp3Args, pcmArgs, pcmBitDepth, pcmDecodeArgs } from '../src/download/ffmpeg'
 import { readFileQuality } from '../src/download/quality'
-import { writeTags } from '../src/download/tagger'
+import { readKeyBpm, writeKeyBpm, writeTags } from '../src/download/tagger'
 
 describe('ffmpegAsset', () => {
 	it('picks the static build for each platform', () => {
@@ -45,6 +45,22 @@ describe('pcmArgs', () => {
 		expect(pcmBitDepth({ codec: 'flac', lossless: true, bitDepth: 16, sampleRateHz: 44100 })).toBe(16)
 		expect(pcmBitDepth({ codec: 'aac', lossless: false, bitrateKbps: 256 })).toBe(16)
 		expect(pcmBitDepth(null)).toBe(24)
+	})
+})
+
+describe('pcmDecodeArgs', () => {
+	it('decodes to mono float samples on stdout, resampled, optionally cut short', () => {
+		const args = pcmDecodeArgs('in.flac', 11025, 600).join(' ')
+		expect(args).toContain('-nostdin')
+		expect(args).toContain('-i in.flac')
+		expect(args).toContain('-t 600 -ac 1 -ar 11025 -f f32le pipe:1')
+		expect(pcmDecodeArgs('in.flac', 11025)).not.toContain('-t')
+	})
+
+	it('reads bytes from stdin', () => {
+		const args = pcmDecodeArgs('pipe:0', 11025)
+		expect(args).not.toContain('-nostdin')
+		expect(args.join(' ')).toContain('-i pipe:0')
 	})
 })
 
@@ -96,6 +112,34 @@ describe.skipIf(!hasFfmpeg)('converting with the installed ffmpeg', () => {
 		const out = path.join(dir, 'tone.mp3')
 		await ffmpeg.toMp3(flac, out, { lossless: true })
 		expect(readFileQuality(out)).toMatchObject({ codec: 'mp3', lossless: false, bitrateKbps: 320, sampleRateHz: 44100 })
+	})
+
+	it('decodes a file, or its bytes, to mono samples for analysis', async () => {
+		const fromPath = await ffmpeg.decodePcm(flac, { sampleRate: 11025 })
+		const fromBytes = await ffmpeg.decodePcm(fs.readFileSync(flac), { sampleRate: 11025 })
+		for (const pcm of [fromPath, fromBytes]) {
+			expect(Math.abs(pcm.length - 11025)).toBeLessThan(200)
+			expect(Math.max(...pcm.subarray(1000, 2000))).toBeGreaterThan(0.05)
+		}
+		expect((await ffmpeg.decodePcm(flac, { sampleRate: 11025, maxSeconds: 0.5 })).length).toBeLessThan(6000)
+		await expect(ffmpeg.decodePcm(Buffer.from('not audio'), { sampleRate: 11025 })).rejects.toThrow(/No se pudo leer el audio/)
+	})
+
+	it('writes the key and BPM where DJ software reads them, in every format', async () => {
+		const files = [flac]
+		for (const format of ['aiff', 'wav'] as const) {
+			const out = path.join(dir, `keyed.${format}`)
+			await ffmpeg.toPcm(flac, out, { format, bitDepth: 16 })
+			files.push(out)
+		}
+		const mp3 = path.join(dir, 'keyed.mp3')
+		await ffmpeg.toMp3(flac, mp3, { lossless: true })
+		files.push(mp3)
+		for (const file of files) {
+			expect(readKeyBpm(file)).toEqual({ bpm: null, key: null })
+			writeKeyBpm(file, { bpm: 127.6, key: 'F#m' })
+			expect(readKeyBpm(file)).toEqual({ bpm: 128, key: 'F#m' })
+		}
 	})
 
 	it('reports a failed conversion', async () => {

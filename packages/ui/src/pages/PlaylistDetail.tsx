@@ -15,6 +15,7 @@ import {
 	findPreset,
 	fitPreset,
 	groupPresets,
+	isAnalyzed,
 	isLossy,
 	outputQuality,
 	presetKey,
@@ -29,6 +30,7 @@ import {
 } from '../lib/format'
 import { Button, Cover, ErrorText, MatchLabel, RemoveDownloadButton, ServiceDot, StatusPill } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
+import { Bpm, GetSongBpmCredit, Key } from '../components/Features'
 
 export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 	const qc = useQueryClient()
@@ -67,6 +69,14 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 	})
 	const scanRun = scanState.data?.scan?.running ? scanState.data.scan : null
 	const scanning = scan.isPending || !!scanRun
+	const featuresState = useQuery({ queryKey: ['features', id], queryFn: () => api.featuresState(id) })
+	const analyze = useMutation({
+		mutationFn: (positions?: number[]) => api.analyzeFeatures(id, positions),
+		onSuccess: (res) => qc.setQueryData(['features', id], res)
+	})
+	const featuresRun = featuresState.data?.scan?.running ? featuresState.data.scan : null
+	const analyzing = analyze.isPending || !!featuresRun
+	const notation = settings?.keyNotation ?? 'camelot'
 	/** What each track would be downloaded in, given the provider and quality picked (null: not looked up yet). */
 	const expected = (t: PlaylistTrackRow): AudioQuality | null => {
 		const max = t.match?.maxQuality
@@ -125,7 +135,9 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 			{playlist.isLoading && <p className="px-8 py-10 text-sm text-muted">Cargando temas…</p>}
 			<div className="px-8">
 				<ErrorText
-					error={playlist.error ?? download.error ?? scan.error ?? resync.error ?? retryWith.error ?? remove.error}
+					error={
+						playlist.error ?? download.error ?? scan.error ?? analyze.error ?? resync.error ?? retryWith.error ?? remove.error
+					}
 				/>
 			</div>
 			{p && (
@@ -198,6 +210,21 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 										? `Escanear calidad (${selected.size})`
 										: 'Escanear calidad'}
 							</Button>
+							<Button
+								onClick={() => analyze.mutate(selected.size > 0 ? [...selected] : undefined)}
+								disabled={analyzing}
+								title={
+									selected.size > 0
+										? 'Vuelve a buscar la clave y el BPM de los temas marcados, desde cero.'
+										: 'Busca la clave y el BPM de los temas que no los tienen: en GetSongBPM (si pusiste su API key en Ajustes) y Deezer (solo BPM). Lo que falte lo analiza Kemix del audio (el archivo descargado o la vista previa de 30 s de Deezer) y, si no hay audio, lo busca en AcousticBrainz. Al abrir la playlist se hace solo con los temas nuevos.'
+								}
+							>
+								{analyzing
+									? `Clave y BPM…${featuresRun ? ` ${featuresRun.done}/${featuresRun.total}` : ''}`
+									: selected.size > 0
+										? `Clave y BPM (${selected.size})`
+										: 'Clave y BPM'}
+							</Button>
 							{selected.size > 0 ? (
 								<Button variant="primary" onClick={() => download.mutate([...selected])} disabled={download.isPending}>
 									{download.isPending ? 'Encolando…' : `Descargar selección (${selected.size})`}
@@ -221,6 +248,8 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 						/>
 					)}
 
+					{featuresState.data?.scan && <FeaturesSummary scan={featuresState.data.scan} tracks={tracks} />}
+
 					{failed.length > 0 && (
 						<RetryWithProvider
 							count={failed.length}
@@ -240,6 +269,9 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								Quitar selección
 							</button>
 						)}
+						{tracks.some((t) => t.features?.bpmSource === 'getsongbpm' || t.features?.keySource === 'getsongbpm') && (
+							<GetSongBpmCredit className="ml-auto text-xs" />
+						)}
 					</div>
 
 					<table className="w-full text-sm">
@@ -256,6 +288,8 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								</th>
 								<th className="w-20 py-3 text-center font-medium">#</th>
 								<th className="py-3 font-medium">Tema</th>
+								<th className="py-3 pr-4 text-right font-medium">BPM</th>
+								<th className="py-3 pr-4 font-medium">Clave</th>
 								{/* Hidden on narrow windows so the fixed-width columns never push the table past the edge. */}
 								<th className="hidden py-3 font-medium xl:table-cell">Álbum</th>
 								<th className="py-3 font-medium">Fuente</th>
@@ -305,6 +339,12 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 												{t.artists.join(', ')}
 												{t.album && <span className="xl:hidden"> · {t.album}</span>}
 											</p>
+										</td>
+										<td className="py-2 pr-4 text-right whitespace-nowrap">
+											<Bpm features={t.features} pending={analyzing} />
+										</td>
+										<td className="py-2 pr-4 whitespace-nowrap">
+											<Key features={t.features} notation={notation} pending={analyzing} />
 										</td>
 										<td className="hidden max-w-0 truncate py-2 pr-4 text-muted xl:table-cell">{t.album}</td>
 										<td className="py-2 pr-4 whitespace-nowrap">
@@ -408,6 +448,52 @@ function QualityCell(props: {
 					⚠ {belowTargetShort(target)}
 				</p>
 			)}
+		</div>
+	)
+}
+
+/**
+ * Progress of the key and BPM lookup and, once done, how the playlist's tracks stand: read from a catalog, measured
+ * by Kemix, or without either.
+ */
+function FeaturesSummary({ scan, tracks }: { scan: ScanState; tracks: PlaylistTrackRow[] }) {
+	let catalog = 0
+	let analyzed = 0
+	let missing = 0
+	for (const t of tracks) {
+		const f = t.features
+		if (!f || (!f.bpm && !f.key)) missing++
+		else if (isAnalyzed(f.bpmSource) || isAnalyzed(f.keySource)) analyzed++
+		else catalog++
+	}
+	return (
+		<div className="mx-8 mt-4 space-y-2 rounded-md border border-line bg-panel px-4 py-2.5 text-sm">
+			<p className="text-muted">
+				{scan.running
+					? `Buscando clave y BPM… ${scan.done} de ${scan.total} temas`
+					: scan.total === 0
+						? 'Clave y BPM: no había temas que buscar.'
+						: `Clave y BPM: ${scan.total} ${scan.total === 1 ? 'tema buscado' : 'temas buscados'}.`}
+				{scan.error && <span className="text-red-300"> {scan.error}.</span>}
+				{scan.failed > 0 && <span className="text-red-300"> {scan.failed} no se pudieron buscar.</span>}
+			</p>
+			{scan.running && (
+				<div className="h-1 overflow-hidden rounded bg-line">
+					<div
+						className="h-full bg-[var(--color-accent)] transition-all"
+						style={{ width: `${scan.total ? (scan.done / scan.total) * 100 : 100}%` }}
+					/>
+				</div>
+			)}
+			<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+				{catalog > 0 && <span className="text-emerald-300">De catálogos: {catalog}</span>}
+				{analyzed > 0 && (
+					<span className="text-sky-300" title="Medidos por Kemix a partir del audio. ≈: de la vista previa de 30 s, aproximados.">
+						Analizados: {analyzed}
+					</span>
+				)}
+				{missing > 0 && <span className="text-muted">Sin datos: {missing}</span>}
+			</div>
 		</div>
 	)
 }

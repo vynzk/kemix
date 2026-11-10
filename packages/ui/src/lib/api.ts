@@ -16,6 +16,7 @@ import type {
 	SoundeoStatus,
 	SourceService,
 	SourceTrack,
+	TrackFeatures,
 	TrackPreview,
 	YtMusicAccount
 } from '@kemix/core'
@@ -38,6 +39,12 @@ export interface AppState {
 	spotifyRedirectUri: string
 	/** Desktop app: services can be connected by signing in on their site in a window. */
 	browserLogin: boolean
+}
+
+/** A track outside the library whose key and BPM are wanted: a search result, or a review option. */
+export interface FeatureLookupItem {
+	service: string
+	track: Pick<SourceTrack, 'sourceId' | 'title' | 'artists' | 'durationMs' | 'isrc'>
 }
 
 export interface DownloadOptions {
@@ -85,6 +92,16 @@ export const api = {
 	scanPlaylist: (id: number, positions?: number[], provider?: DownloadService | null) =>
 		request<{ scan: ScanState }>('POST', `/api/playlists/${id}/scan`, { positions, provider }),
 	scanState: (id: number) => request<{ scan: ScanState | null }>('GET', `/api/playlists/${id}/scan`),
+	/** Key and BPM of the given positions (again), or of every track still missing them; runs in the background. */
+	analyzeFeatures: (id: number, positions?: number[]) =>
+		request<{ scan: ScanState }>('POST', `/api/playlists/${id}/features`, { positions }),
+	featuresState: (id: number) => request<{ scan: ScanState | null }>('GET', `/api/playlists/${id}/features`),
+	/**
+	 * Key and BPM of tracks outside the library: what's known now (null for the rest, which come as `track-features`
+	 * events). A new batch from the same `group` stops what's left of the previous one.
+	 */
+	lookupFeatures: (items: FeatureLookupItem[], group: string) =>
+		request<{ results: (TrackFeatures | null)[] }>('POST', '/api/features/lookup', { items, group }),
 	preview: (trackId: number) => request<{ preview: TrackPreview | null }>('GET', `/api/tracks/${trackId}/preview`),
 	/**
 	 * Audio for a track that isn't in the library (a search result from `service`): the service's full song, else

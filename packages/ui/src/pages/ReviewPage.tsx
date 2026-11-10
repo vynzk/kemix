@@ -1,16 +1,18 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, MatchCandidate, ReviewItem } from '@kemix/core'
 import { api } from '../lib/api'
-import { useDownloadProviders } from '../lib/hooks'
+import { useDownloadProviders, useFeatureLookup, useGetSongBpm, useKeyNotation } from '../lib/hooks'
 import { LOSSY_NOTE, SERVICE_LABEL, cx, duration, isLossy, qualityLabel, qualityTone } from '../lib/format'
 import { Button, Cover, Empty, ErrorText, Input, PageHeader, Select, ServiceDot } from '../components/ui'
 import { PlayButton, candidateKey, usePlayer } from '../components/Player'
+import { FeaturesInline, GetSongBpmCredit, LookedUpFeatures } from '../components/Features'
 
 export function ReviewPage() {
 	const qc = useQueryClient()
 	const review = useQuery({ queryKey: ['review'], queryFn: api.review })
 	const providers = useDownloadProviders()
+	const getSongBpm = useGetSongBpm()
 	const items = review.data ?? []
 	const notFound = items.filter((i) => i.notFound)
 	const bulk = useMutation({
@@ -36,7 +38,9 @@ export function ReviewPage() {
 				}
 			>
 				Temas que no encontré con seguridad. Escucha las opciones (▶), elige la versión correcta, busca a mano en el
-				proveedor que quieras y decide desde dónde bajarla, u omítelos.
+				proveedor que quieras y decide desde dónde bajarla, u omítelos. El BPM de una opción sale en amarillo si no
+				coincide con el del tema original: puede ser otra versión.
+				{getSongBpm && <GetSongBpmCredit className="ml-1" />}
 				{bulk.data && (
 					<span className="ml-1 text-zinc-300">
 						{bulk.data.queued} en cola desde YouTube
@@ -98,6 +102,17 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 	})
 	const candidates = results?.list ?? item.candidates
 	const busy = accept.isPending || skip.isPending
+	const notation = useKeyNotation()
+	// Key and BPM of the options, to compare with the track's: a different tempo is likely another version.
+	const lookupItems = useMemo(
+		() =>
+			candidates.map((c) => ({
+				service: c.service,
+				track: { sourceId: c.id, title: c.title, artists: c.artists, durationMs: c.durationMs, isrc: c.isrc }
+			})),
+		[candidates]
+	)
+	const lookingUp = useFeatureLookup(`review:${item.trackId}`, lookupItems)
 	/** Where a candidate would actually be downloaded from. */
 	const downloadService = (c: MatchCandidate) => from || c.service
 	/** Lossy services the shown options would download from, to warn about their quality. */
@@ -120,6 +135,7 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 					{item.album && `${item.album} · `}
 					{duration(item.durationMs)}
 				</p>
+				<FeaturesInline features={item.features} notation={notation} pending={false} />
 				<p className="pt-1 text-xs break-words text-zinc-600">En: {item.playlists.join(', ')}</p>
 				{item.notFound && (
 					<p className="pt-1 text-xs text-amber-300/80">No se encontró una coincidencia fiable en Qobuz/Deezer.</p>
@@ -202,7 +218,21 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 							const key = candidateKey(c)
 							const service = downloadService(c)
 							return (
-								<CandidateRow key={key} c={c} active={player.playing?.key === key} onPlay={() => player.playCandidate(c)}>
+								<CandidateRow
+									key={key}
+									c={c}
+									active={player.playing?.key === key}
+									onPlay={() => player.playCandidate(c)}
+									features={
+										<LookedUpFeatures
+											service={c.service}
+											sourceId={c.id}
+											notation={notation}
+											pending={lookingUp}
+											compareBpm={item.features?.bpm}
+										/>
+									}
+								>
 									{confirming === key ? (
 										<>
 											<Button variant="primary" onClick={() => accept.mutate(c)} disabled={busy}>
@@ -241,11 +271,14 @@ function CandidateRow({
 	c,
 	active,
 	onPlay,
+	features,
 	children
 }: {
 	c: MatchCandidate
 	active: boolean
 	onPlay: () => void
+	/** BPM and key of this option. */
+	features: ReactNode
 	children: ReactNode
 }) {
 	return (
@@ -278,6 +311,7 @@ function CandidateRow({
 						</span>
 					)}
 				</p>
+				<div className="mt-1">{features}</div>
 			</div>
 			<span
 				title="Parecido con el tema original"

@@ -194,7 +194,13 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		}))
 		return kemix.library.copyPlaylist(service(req.params), body.name, clean)
 	})
-	app.get('/api/playlists/:id', async (req) => kemix.library.getPlaylist(id(req.params)))
+	app.get('/api/playlists/:id', async (req) => {
+		const playlistId = id(req.params)
+		const playlist = await kemix.library.getPlaylist(playlistId)
+		// Key and BPM of tracks never looked up, in the background (nothing to do most of the time).
+		kemix.features.autoPlaylist(playlistId)
+		return playlist
+	})
 	app.post('/api/playlists/:id/sync', async (req) => {
 		await kemix.library.syncPlaylistTracks(id(req.params), true)
 		return { ok: true }
@@ -221,6 +227,45 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		const o = downloadOptions(req.body)
 		await kemix.queue.enqueuePlaylist(id(req.params), o.positions, o.provider, o.level, o.format)
 		return { ok: true }
+	})
+	app.get('/api/playlists/:id/features', async (req) => ({ scan: kemix.features.state(id(req.params)) }))
+	/** Key and BPM: of the given positions (again, from scratch), or of every track still missing them. */
+	app.post('/api/playlists/:id/features', async (req) => {
+		const o = downloadOptions(req.body)
+		return { scan: await kemix.features.analyzePlaylist(id(req.params), o.positions) }
+	})
+	/**
+	 * Key and BPM of tracks outside the library (search results, review options): what's known now, null for the rest,
+	 * which arrive later as `track-features` events. `group` names the screen asking; a new batch from it stops the last.
+	 */
+	app.post('/api/features/lookup', async (req) => {
+		const body = req.body as { group?: unknown; items?: unknown } | undefined
+		const items = body?.items
+		const valid = (x: unknown): x is { service: string; track: SourceTrack } => {
+			const i = x as { service?: unknown; track?: Partial<SourceTrack> } | null
+			const t = i?.track
+			return (
+				(isAccountService(i?.service) || isDownloadService(i?.service)) &&
+				!!t &&
+				typeof t.sourceId === 'string' &&
+				typeof t.title === 'string' &&
+				Array.isArray(t.artists)
+			)
+		}
+		if (typeof body?.group !== 'string' || !Array.isArray(items) || items.length > 200 || !items.every(valid)) {
+			throw Object.assign(new Error('Temas inválidos'), { statusCode: 400 })
+		}
+		const clean = items.map(({ service, track: t }) => ({
+			service,
+			track: {
+				sourceId: t.sourceId,
+				title: t.title,
+				artists: t.artists.filter((a): a is string => typeof a === 'string'),
+				durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined,
+				isrc: typeof t.isrc === 'string' && t.isrc ? t.isrc : undefined
+			}
+		}))
+		return { results: kemix.features.lookupTracks(clean, body.group) }
 	})
 	app.get('/api/playlists/:id/scan', async (req) => ({ scan: kemix.queue.scanState(id(req.params)) }))
 	app.post('/api/playlists/:id/scan', async (req) => {

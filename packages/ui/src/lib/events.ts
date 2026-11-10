@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import type { DownloadRow, KemixEvent } from '@kemix/core'
+import { trackFeaturesKey } from './hooks'
 
 export interface SyncState {
 	running: boolean
@@ -39,6 +40,12 @@ export function useLiveEvents(): SyncState {
 					break
 				case 'scan':
 					qc.setQueryData(['scan', event.scan.playlistId], { scan: event.scan })
+					break
+				case 'features':
+					qc.setQueryData(['features', event.scan.playlistId], { scan: event.scan })
+					break
+				case 'track-features':
+					qc.setQueryData(trackFeaturesKey(event.service, event.sourceId), event.features)
 					break
 				case 'download':
 					upsertDownload(qc, event.row)

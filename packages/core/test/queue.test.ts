@@ -137,6 +137,8 @@ beforeEach(() => {
 	converter = new FakeConverter()
 	kemix = new Kemix({ dataDir: path.join(dir, 'data'), cipher: passphraseCipher('test'), converter })
 	kemix.settings.update({ downloadDir: path.join(dir, 'music') })
+	// Key and BPM analysis after each download has its own tests (features-analyzer.test.ts).
+	Object.assign(kemix.features, { trackDownloaded: () => {} })
 	downloader = new FakeDownloader()
 	const source = new FakeSource()
 	Object.assign(kemix.accounts, {

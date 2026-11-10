@@ -135,6 +135,21 @@ const MIGRATIONS: string[] = [
 		SELECT target_service, target_id, quality_level, 'original', path, quality FROM files;
 	DROP TABLE files;
 	ALTER TABLE files_new RENAME TO files;
+	`,
+	// 7: BPM and key of each track, and where each came from. A row means the track was looked up (even if nothing was
+	// found), so opening a playlist doesn't look it up again. key_tonic: pitch class, 0 = C … 11 = B.
+	`
+	CREATE TABLE track_features (
+		track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+		bpm REAL,
+		bpm_source TEXT,
+		key_tonic INTEGER,
+		key_minor INTEGER,
+		key_source TEXT,
+		status TEXT NOT NULL,
+		error TEXT,
+		updated_at INTEGER NOT NULL
+	);
 	`
 ]
 

@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import type { Db } from './db'
-import { DOWNLOAD_SERVICES, isOutputFormat, isQualityLevel, type Settings } from './types'
+import { DOWNLOAD_SERVICES, isKeyNotation, isOutputFormat, isQualityLevel, type Settings } from './types'
 
 export const DEFAULT_PORT = 47800
 
@@ -15,7 +15,10 @@ export function defaultSettings(): Settings {
 		autoAcceptThreshold: 0.9,
 		spotifyClientId: '',
 		ytDlpPath: '',
-		port: DEFAULT_PORT
+		port: DEFAULT_PORT,
+		keyNotation: 'camelot',
+		getSongBpmKey: '',
+		writeKeyBpmTags: true
 	}
 }
 
@@ -52,7 +55,10 @@ function sanitize(s: Settings): Settings {
 		autoAcceptThreshold: clamp(s.autoAcceptThreshold, 0.5, 1),
 		spotifyClientId: s.spotifyClientId.trim(),
 		ytDlpPath: (s.ytDlpPath ?? '').trim().replace(/^"(.*)"$/, '$1'),
-		port: clamp(Math.round(s.port), 1024, 65535)
+		port: clamp(Math.round(s.port), 1024, 65535),
+		keyNotation: isKeyNotation(s.keyNotation) ? s.keyNotation : defaultSettings().keyNotation,
+		getSongBpmKey: typeof s.getSongBpmKey === 'string' ? s.getSongBpmKey.trim() : '',
+		writeKeyBpmTags: typeof s.writeKeyBpmTags === 'boolean' ? s.writeKeyBpmTags : defaultSettings().writeKeyBpmTags
 	}
 }
 

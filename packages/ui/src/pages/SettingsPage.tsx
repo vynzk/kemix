@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DownloadService, Settings } from '@kemix/core'
+import type { DownloadService, KeyNotation, Settings } from '@kemix/core'
 import { api } from '../lib/api'
-import { DOWNLOAD_PRESETS, SERVICE_LABEL, findPreset, groupPresets, isLossy, presetKey } from '../lib/format'
+import {
+	DOWNLOAD_PRESETS,
+	KEY_NOTATION_LABEL,
+	SERVICE_LABEL,
+	findPreset,
+	groupPresets,
+	isLossy,
+	presetKey
+} from '../lib/format'
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 /** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
@@ -133,6 +141,54 @@ export function SettingsPage() {
 						value={draft.autoAcceptThreshold}
 						onChange={(e) => set('autoAcceptThreshold', Number(e.target.value))}
 						className="w-full accent-[var(--color-accent)]"
+					/>
+				</Field>
+				<Field label="Notación de la clave" hint="Cómo se muestra la clave de cada tema en las playlists.">
+					<select
+						value={draft.keyNotation}
+						onChange={(e) => set('keyNotation', e.target.value as KeyNotation)}
+						className="w-full rounded-md border border-line bg-ink px-3 py-2 text-sm"
+					>
+						{(Object.keys(KEY_NOTATION_LABEL) as KeyNotation[]).map((n) => (
+							<option key={n} value={n}>
+								{KEY_NOTATION_LABEL[n]}
+							</option>
+						))}
+					</select>
+				</Field>
+				<Field
+					label="Clave y BPM en los archivos"
+					hint="Al terminar cada descarga, la clave y el BPM se escriben en los tags (TKEY/TBPM o INITIALKEY/BPM), que leen rekordbox, Serato, Traktor y otros programas de DJ."
+				>
+					<span className="flex items-center gap-2 text-sm">
+						<input
+							type="checkbox"
+							className="accent-[var(--color-accent)]"
+							checked={draft.writeKeyBpmTags}
+							onChange={(e) => set('writeKeyBpmTags', e.target.checked)}
+						/>
+						Escribir la clave y el BPM en los archivos descargados
+					</span>
+				</Field>
+				<Field
+					label="API key de GetSongBPM (opcional)"
+					hint={
+						<>
+							Con una key, la clave y el BPM se buscan primero en GetSongBPM, que tiene la mayoría de los temas comerciales.
+							Es gratis: regístrate en{' '}
+							<a className="underline" href="https://getsongbpm.com/api" target="_blank" rel="noreferrer">
+								getsongbpm.com/api
+							</a>
+							. Sin key, el BPM sale de Deezer y lo que falte (casi siempre la clave) lo analiza Kemix del audio.
+						</>
+					}
+				>
+					<Input
+						value={draft.getSongBpmKey}
+						onChange={(e) => set('getSongBpmKey', e.target.value)}
+						placeholder="Pega aquí tu API key"
+						autoComplete="off"
+						spellCheck={false}
 					/>
 				</Field>
 				<Field label="Puerto local" hint="Usado por la redirección OAuth de Spotify. Requiere reiniciar la app.">

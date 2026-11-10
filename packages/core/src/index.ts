@@ -7,7 +7,9 @@ import { SettingsStore } from './settings'
 import { Accounts } from './accounts'
 import { Library } from './library'
 import { DownloadQueue } from './download/queue'
-import { Ffmpeg, ManagedFfmpeg, type AudioConverter } from './download/ffmpeg'
+import { Ffmpeg, ManagedFfmpeg, type AudioConverter, type AudioDecoder } from './download/ffmpeg'
+import { FeatureAnalyzer } from './features/analyzer'
+import type { FeatureSources } from './features/lookup'
 
 export * from './types'
 export { passphraseCipher, type Cipher } from './secrets'
@@ -16,7 +18,9 @@ export type { Accounts, SpotifyWebLogin } from './accounts'
 export type { SpotifyWebOp, SpotifyWebSession } from './sources/spotify-web'
 export type { Library } from './library'
 export type { DownloadQueue } from './download/queue'
-export type { AudioConverter, Mp3Converter, PcmFormat } from './download/ffmpeg'
+export type { AudioConverter, AudioDecoder, Mp3Converter, PcmFormat } from './download/ffmpeg'
+export type { FeatureAnalyzer } from './features/analyzer'
+export { FeatureSources } from './features/lookup'
 export type { YtMusicAccount } from './sources/ytmusic'
 
 export interface KemixOptions {
@@ -28,6 +32,10 @@ export interface KemixOptions {
 	 * fake one.
 	 */
 	converter?: AudioConverter
+	/** Decodes audio to analyze its key and BPM; by default the same ffmpeg. Tests pass a fake one. */
+	decoder?: AudioDecoder
+	/** Catalogs for key and BPM; tests pass one without request delays. */
+	featureSources?: FeatureSources
 }
 
 /** The whole backend, independent of how it is exposed (Electron, HTTP server…). */
@@ -39,6 +47,7 @@ export class Kemix {
 	readonly accounts: Accounts
 	readonly library: Library
 	readonly queue: DownloadQueue
+	readonly features: FeatureAnalyzer
 
 	constructor(opts: KemixOptions) {
 		fs.mkdirSync(opts.dataDir, { recursive: true })
@@ -48,8 +57,25 @@ export class Kemix {
 		const binDir = path.join(opts.dataDir, 'bin')
 		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, binDir)
 		this.library = new Library(this.db, this.accounts, this.events)
-		const converter = opts.converter ?? new Ffmpeg(new ManagedFfmpeg(binDir))
-		this.queue = new DownloadQueue(this.db, this.accounts, this.library, this.settings, this.events, converter)
+		const ffmpeg = new Ffmpeg(new ManagedFfmpeg(binDir))
+		this.features = new FeatureAnalyzer(
+			this.db,
+			this.library,
+			this.settings,
+			this.events,
+			opts.decoder ?? ffmpeg,
+			(track, minScore) => this.accounts.findIsrc(track, minScore),
+			opts.featureSources
+		)
+		this.queue = new DownloadQueue(
+			this.db,
+			this.accounts,
+			this.library,
+			this.settings,
+			this.events,
+			opts.converter ?? ffmpeg,
+			(trackId) => this.features.trackDownloaded(trackId)
+		)
 	}
 
 	start() {
@@ -60,6 +86,7 @@ export class Kemix {
 
 	close() {
 		this.queue.stopScans()
+		this.features.stop()
 		this.db.close()
 	}
 }

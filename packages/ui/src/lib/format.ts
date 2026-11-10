@@ -1,4 +1,13 @@
-import type { AccountService, AudioQuality, DownloadService, OutputFormat, QualityLevel } from '@kemix/core'
+import type {
+	AccountService,
+	AudioQuality,
+	DownloadService,
+	FeatureSource,
+	KeyNotation,
+	MusicalKey,
+	OutputFormat,
+	QualityLevel
+} from '@kemix/core'
 
 export const SERVICE_LABEL: Record<AccountService | DownloadService, string> = {
 	spotify: 'Spotify',
@@ -274,6 +283,80 @@ export const SERVICE_COLOR: Record<AccountService, string> = {
 	soundcloud: '#ff5500',
 	soundeo: '#f5a623'
 }
+
+// ---------- key and BPM ----------
+
+/** Key names as key signatures spell them (B♭ major, not A♯; F♯ minor, not G♭). */
+const MAJOR_NAMES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B']
+const MINOR_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'B♭', 'B']
+
+const mod12 = (n: number) => ((n % 12) + 12) % 12
+
+/** "Am", "F♯m", "B♭". */
+export function keyName(key: MusicalKey): string {
+	return key.minor ? `${MINOR_NAMES[mod12(key.tonic)]}m` : MAJOR_NAMES[mod12(key.tonic)]!
+}
+
+/** Position on the Camelot wheel, 1–12 (C major and A minor are 8). Mirrors `camelot` in @kemix/core. */
+export function camelotNumber(key: MusicalKey): number {
+	const major = key.minor ? mod12(key.tonic + 3) : mod12(key.tonic)
+	return mod12(major * 7 + 7) + 1
+}
+
+/** "8A" (minor) / "8B" (major). */
+export function camelot(key: MusicalKey): string {
+	return `${camelotNumber(key)}${key.minor ? 'A' : 'B'}`
+}
+
+/** Open Key (Traktor): "1m" is A minor, "1d" C major. */
+export function openKey(key: MusicalKey): string {
+	return `${mod12(camelotNumber(key) - 8) + 1}${key.minor ? 'm' : 'd'}`
+}
+
+/** The key in the chosen notation, and the musical name beside it (none when that's the notation already). */
+export function keyLabel(key: MusicalKey, notation: KeyNotation): { main: string; aside: string | null } {
+	if (notation === 'musical') return { main: keyName(key), aside: null }
+	return { main: notation === 'openkey' ? openKey(key) : camelot(key), aside: keyName(key) }
+}
+
+/**
+ * Colour of a key's spot on the Camelot wheel: neighbours (which mix well) get neighbouring hues, and the minor (A)
+ * ring is darker than the major (B) one.
+ */
+export function camelotColor(key: MusicalKey): string {
+	const hue = mod12(camelotNumber(key) + 3) * 30
+	return `hsl(${hue} 65% ${key.minor ? 30 : 38}%)`
+}
+
+export const KEY_NOTATION_LABEL: Record<KeyNotation, string> = {
+	camelot: 'Camelot (8A) + musical',
+	musical: 'Musical (Am, F♯)',
+	openkey: 'Open Key (1m) + musical'
+}
+
+/** "128", "127.5". */
+export function bpmLabel(bpm: number | null | undefined): string {
+	if (!bpm) return ''
+	const r = Math.round(bpm * 10) / 10
+	return Number.isInteger(r) ? String(r) : r.toFixed(1)
+}
+
+export const FEATURE_SOURCE_LABEL: Record<FeatureSource, string> = {
+	tags: 'los tags del archivo',
+	getsongbpm: 'GetSongBPM',
+	deezer: 'Deezer',
+	acousticbrainz: 'AcousticBrainz',
+	analysis: 'el análisis del archivo',
+	preview: 'el análisis de la vista previa de 30 s (aproximado)'
+}
+
+/** Same tempo within 3%, counting double and half (the same beat read at another octave). */
+export function sameTempo(a: number, b: number): boolean {
+	return [b, b * 2, b / 2].some((x) => Math.abs(a - x) / x <= 0.03)
+}
+
+/** Values Kemix measured itself rather than read somewhere. */
+export const isAnalyzed = (source: FeatureSource | null) => source === 'analysis' || source === 'preview'
 
 export function duration(ms: number | null | undefined) {
 	if (!ms) return '–'

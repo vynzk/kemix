@@ -3,13 +3,20 @@ import type { AudioQuality } from '@kemix/core'
 import {
 	DOWNLOAD_PRESETS,
 	belowTarget,
+	bpmLabel,
+	camelot,
+	camelotColor,
 	conversionTarget,
 	expectedQuality,
 	findPreset,
 	fitPreset,
+	keyLabel,
+	keyName,
+	openKey,
 	outputQuality,
 	presetKey,
-	presetOptions
+	presetOptions,
+	sameTempo
 } from '../src/lib/format'
 
 const keys = (list: { level: string; format: string }[]) => list.map((p) => `${p.level}:${p.format}`)
@@ -100,5 +107,52 @@ describe('conversions', () => {
 		expect(belowTarget('mp3', expectedQuality(AAC_128, 'youtube', 'mp3_compat'))).toBe(true)
 		expect(belowTarget('mp3', expectedQuality(HIRES, 'qobuz', 'mp3_compat', HIRES))).toBe(false)
 		expect(belowTarget(null, AAC_128)).toBe(false)
+	})
+})
+
+describe('key and BPM', () => {
+	const key = (tonic: number, minor: boolean) => ({ tonic, minor })
+
+	it('shows the key in each notation, with the musical name beside Camelot and Open Key', () => {
+		expect(keyLabel(key(9, true), 'camelot')).toEqual({ main: '8A', aside: 'Am' })
+		expect(keyLabel(key(6, true), 'openkey')).toEqual({ main: '4m', aside: 'F♯m' })
+		expect(keyLabel(key(10, false), 'musical')).toEqual({ main: 'B♭', aside: null })
+	})
+
+	it('spells keys as their signatures do', () => {
+		expect([1, 3, 6, 8, 10].map((t) => keyName(key(t, false)))).toEqual(['D♭', 'E♭', 'F♯', 'A♭', 'B♭'])
+		expect([1, 3, 6, 8, 10].map((t) => keyName(key(t, true)))).toEqual(['C♯m', 'E♭m', 'F♯m', 'G♯m', 'B♭m'])
+	})
+
+	it('agrees with the Camelot and Open Key wheels', () => {
+		expect(camelot(key(0, false))).toBe('8B')
+		expect(camelot(key(8, true))).toBe('1A')
+		expect(camelot(key(1, true))).toBe('12A')
+		expect(openKey(key(0, false))).toBe('1d')
+		expect(openKey(key(9, true))).toBe('1m')
+		expect(openKey(key(7, false))).toBe('2d')
+	})
+
+	it('colours relative keys alike, the minor ring darker', () => {
+		expect(camelotColor(key(9, true))).toMatch(/^hsl\(\d+ 65% 30%\)$/)
+		expect(camelotColor(key(0, false))).toMatch(/^hsl\(\d+ 65% 38%\)$/)
+		const hue = (c: string) => c.match(/^hsl\((\d+)/)![1]
+		expect(hue(camelotColor(key(9, true)))).toBe(hue(camelotColor(key(0, false))))
+		expect(hue(camelotColor(key(7, false)))).not.toBe(hue(camelotColor(key(0, false))))
+	})
+
+	it('shows the BPM whole when it is, else with one decimal', () => {
+		expect(bpmLabel(128)).toBe('128')
+		expect(bpmLabel(127.96)).toBe('128')
+		expect(bpmLabel(127.5)).toBe('127.5')
+		expect(bpmLabel(null)).toBe('')
+	})
+
+	it('takes a tempo within 3%, or doubled or halved, as the same', () => {
+		expect(sameTempo(124, 125)).toBe(true)
+		expect(sameTempo(87, 174)).toBe(true)
+		expect(sameTempo(174, 87)).toBe(true)
+		expect(sameTempo(128, 124)).toBe(false)
+		expect(sameTempo(140, 100)).toBe(false)
 	})
 })

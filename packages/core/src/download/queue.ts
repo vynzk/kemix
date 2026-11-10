@@ -81,7 +81,9 @@ export class DownloadQueue {
 		private settings: SettingsStore,
 		private events: EventBus,
 		/** Converts downloads: to MP3 for the 'mp3_compat' quality, to AIFF/WAV for those formats. */
-		private converter: AudioConverter
+		private converter: AudioConverter,
+		/** Called when a track's file is in place (downloaded, converted or reused), e.g. to analyze it. */
+		private onDownloaded: (trackId: number) => void = () => {}
 	) {}
 
 	/** Resume work left over from a previous run (e.g. the app was closed mid-download). */
@@ -770,6 +772,7 @@ export class DownloadQueue {
 			)
 			.run(dest, service, quality ? JSON.stringify(quality) : null, now(), row.id)
 		this.#emitRow(row.id)
+		this.onDownloaded(row.track_id)
 	}
 
 	#fail(row: Row, err: unknown) {

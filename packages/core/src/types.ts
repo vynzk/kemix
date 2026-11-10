@@ -196,6 +196,47 @@ export interface Settings {
 	ytDlpPath: string
 	/** Port the local server listens on (used for the Spotify OAuth redirect). */
 	port: number
+	/** How keys are shown. */
+	keyNotation: KeyNotation
+	/** GetSongBPM API key (free, from getsongbpm.com). Empty: that source isn't used. */
+	getSongBpmKey: string
+	/** Write the key and BPM into the downloaded files' tags (TKEY/TBPM, INITIALKEY/BPM), for DJ software. */
+	writeKeyBpmTags: boolean
+}
+
+/**
+ * Key notation: the Camelot wheel (Mixed In Key; "8A"), plain musical names ("Am", "F#"), or Open Key (Traktor; "1m").
+ * Camelot and Open Key are shown with the musical name beside them.
+ */
+export type KeyNotation = 'camelot' | 'musical' | 'openkey'
+export const KEY_NOTATIONS: KeyNotation[] = ['camelot', 'musical', 'openkey']
+
+export function isKeyNotation(s: unknown): s is KeyNotation {
+	return typeof s === 'string' && (KEY_NOTATIONS as string[]).includes(s)
+}
+
+/** A musical key: its tonic as a pitch class (0 = C, 1 = C#/Db … 11 = B) and whether it's minor. */
+export interface MusicalKey {
+	tonic: number
+	minor: boolean
+}
+
+/**
+ * Where a track's BPM or key came from: the downloaded file's own tags, a catalog (GetSongBPM, Deezer, AcousticBrainz),
+ * or Kemix's analysis of the audio, of the whole downloaded file (`analysis`) or of a 30-second preview (`preview`,
+ * rougher).
+ */
+export type FeatureSource = 'tags' | 'getsongbpm' | 'deezer' | 'acousticbrainz' | 'analysis' | 'preview'
+
+/** BPM and key of a track, as far as they could be found. */
+export interface TrackFeatures {
+	bpm: number | null
+	bpmSource: FeatureSource | null
+	key: MusicalKey | null
+	keySource: FeatureSource | null
+	/** 'notfound': no source had it and there was no audio to analyze; 'error': the lookup failed (retried by hand). */
+	status: 'done' | 'notfound' | 'error'
+	error: string | null
 }
 
 export interface Folder {
@@ -245,6 +286,8 @@ export interface PlaylistTrackRow {
 		quality: AudioQuality | null
 		service: DownloadService | null
 	} | null
+	/** BPM and key; null until they're looked up. */
+	features: TrackFeatures | null
 }
 
 export interface PlaylistDetail extends PlaylistSummary {
@@ -262,6 +305,8 @@ export interface ReviewItem {
 	candidates: MatchCandidate[]
 	/** Not found on any lossless service: YouTube/SoundCloud are the remaining options. */
 	notFound: boolean
+	/** BPM and key of the library track, to compare with the options'. */
+	features: TrackFeatures | null
 }
 
 export interface YouTubePreview {
@@ -316,6 +361,10 @@ export interface ScanState {
 
 export type KemixEvent =
 	| { type: 'scan'; scan: ScanState }
+	/** Progress of a playlist's key and BPM lookup (same shape as the quality scan). */
+	| { type: 'features'; scan: ScanState }
+	/** BPM and key of a track outside the library (a search result, a review option), once looked up. */
+	| { type: 'track-features'; service: string; sourceId: string; features: TrackFeatures }
 	| { type: 'accounts' }
 	| { type: 'library' }
 	| { type: 'sync'; state: 'start' | 'progress' | 'done' | 'error'; message?: string }

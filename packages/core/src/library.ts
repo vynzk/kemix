@@ -21,6 +21,7 @@ import { SOURCE_SERVICES } from './types'
 import { sourceVideo } from './sources/youtube'
 import { sourceUpload } from './sources/soundcloud'
 import { findInCatalog } from './match/resolve'
+import { toTrackFeatures, type FeatureRow } from './features/analyzer'
 import { errorMessage, now, SessionExpiredError } from './util'
 
 const SERVICE_NAMES: Record<SourceService, string> = {
@@ -365,15 +366,17 @@ export class Library {
 			.prepare(
 				`SELECT pt.position, t.id AS track_id, t.title, t.artists, t.album, t.duration_ms, t.isrc,
 				   m.status AS m_status, m.target_service, m.target_url, m.confidence, m.target_meta,
-				   d.id AS d_id, d.status AS d_status, d.error AS d_error, d.path AS d_path, d.quality AS d_quality, d.service AS d_service
+				   d.id AS d_id, d.status AS d_status, d.error AS d_error, d.path AS d_path, d.quality AS d_quality, d.service AS d_service,
+				   f.status AS f_status, f.bpm, f.bpm_source, f.key_tonic, f.key_minor, f.key_source, f.error AS f_error
 				 FROM playlist_tracks pt
 				 JOIN tracks t ON t.id = pt.track_id
 				 LEFT JOIN matches m ON m.track_id = t.id
 				 LEFT JOIN downloads d ON d.playlist_id = pt.playlist_id AND d.position = pt.position
+				 LEFT JOIN track_features f ON f.track_id = t.id
 				 WHERE pt.playlist_id = ?
 				 ORDER BY pt.position`
 			)
-			.all(id) as {
+			.all(id) as ({
 			position: number
 			track_id: number
 			title: string
@@ -392,7 +395,9 @@ export class Library {
 			d_path: string | null
 			d_quality: string | null
 			d_service: DownloadService | null
-		}[]
+			f_status: FeatureRow['status'] | null
+			f_error: string | null
+		} & Omit<FeatureRow, 'status' | 'error'>)[]
 		const tracks: PlaylistTrackRow[] = rows.map((r) => ({
 			position: r.position,
 			trackId: r.track_id,
@@ -419,7 +424,8 @@ export class Library {
 						quality: r.d_quality ? (JSON.parse(r.d_quality) as AudioQuality) : null,
 						service: r.d_service
 					}
-				: null
+				: null,
+			features: r.f_status ? toTrackFeatures({ ...r, status: r.f_status, error: r.f_error }) : null
 		}))
 		return { ...summary, tracks }
 	}
@@ -507,13 +513,15 @@ export class Library {
 			.prepare(
 				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, t.url, m.candidates, m.status,
 				   (SELECT json_group_array(DISTINCT p.name) FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
-				    WHERE pt.track_id = t.id) AS playlists
+				    WHERE pt.track_id = t.id) AS playlists,
+				   f.status AS f_status, f.bpm, f.bpm_source, f.key_tonic, f.key_minor, f.key_source, f.error AS f_error
 				 FROM matches m JOIN tracks t ON t.id = m.track_id
+				 LEFT JOIN track_features f ON f.track_id = t.id
 				 WHERE m.status IN ('pending', 'notfound')
 				   AND EXISTS (SELECT 1 FROM downloads d WHERE d.track_id = t.id AND d.status = 'needs_review')
 				 ORDER BY t.id`
 			)
-			.all() as {
+			.all() as ({
 			id: number
 			title: string
 			artists: string
@@ -526,7 +534,9 @@ export class Library {
 			candidates: string | null
 			status: MatchStatus
 			playlists: string
-		}[]
+			f_status: FeatureRow['status'] | null
+			f_error: string | null
+		} & Omit<FeatureRow, 'status' | 'error'>)[]
 		return rows.map((r) => {
 			const artists = JSON.parse(r.artists) as string[]
 			let candidates = r.candidates ? (JSON.parse(r.candidates) as MatchCandidate[]) : []
@@ -556,7 +566,8 @@ export class Library {
 				source: r.source,
 				playlists: JSON.parse(r.playlists),
 				candidates,
-				notFound: r.status === 'notfound'
+				notFound: r.status === 'notfound',
+				features: r.f_status ? toTrackFeatures({ ...r, status: r.f_status, error: r.f_error }) : null
 			}
 		})
 	}
