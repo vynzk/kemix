@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="es">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Kemix · Tus playlists, sin pérdida</title>
+	<meta name="description" content="Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y las descarga en FLAC, AIFF o WAV, con carátula, clave y BPM. App de escritorio para Windows y Linux.">
+	<meta name="theme-color" content="#0d0e10">
+	<meta name="color-scheme" content="dark">
+	<link rel="canonical" href="https://vynzk.github.io/kemix/">
+	<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+	<link rel="apple-touch-icon" href="assets/icon.png">
+
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Kemix">
+	<meta property="og:locale" content="es_ES">
+	<meta property="og:url" content="https://vynzk.github.io/kemix/">
+	<meta property="og:title" content="Kemix · Tus playlists, sin pérdida">
+	<meta property="og:description" content="Trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y descárgalas en FLAC, AIFF o WAV, con clave y BPM.">
+	<meta property="og:image" content="https://vynzk.github.io/kemix/assets/og.jpg">
+	<meta property="og:image:type" content="image/jpeg">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta property="og:image:alt" content="Kemix: tus playlists, sin pérdida">
+	<meta name="twitter:card" content="summary_large_image">
+
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+	<link rel="stylesheet" href="styles.css">
+	<script>document.documentElement.classList.add('js')</script>
+	<script src="main.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+<svg class="sprite" aria-hidden="true">
+	<symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+	<symbol id="i-windows" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M3 5.1 10.4 4v7.3H3zM11.4 3.9 21 2.5v8.8h-9.6zM3 12.3h7.4v7.3L3 18.6zM11.4 12.3H21v8.9l-9.6-1.4z"/></symbol>
+	<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></symbol>
+	<symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+	<symbol id="i-linux" viewBox="0 0 24 24"><g stroke="none"><ellipse cx="12" cy="13.6" rx="6.4" ry="8" fill="currentColor"/><ellipse cx="12" cy="15.4" rx="4" ry="5.4" fill="#0d0e10" fill-opacity=".85"/><circle cx="10.3" cy="8.6" r="1.25" fill="#0d0e10"/><circle cx="13.7" cy="8.6" r="1.25" fill="#0d0e10"/><path d="M10.4 10.6 12 11.9l1.6-1.3z" fill="#f5a623"/><ellipse cx="8.6" cy="21.6" rx="2.4" ry="1" fill="#f5a623"/><ellipse cx="15.4" cy="21.6" rx="2.4" ry="1" fill="#f5a623"/></g></symbol>
+</svg>
+
+<!-- ============================== Navegación ============================== -->
+<header class="nav" id="nav">
+	<div class="wrap nav-inner">
+		<a class="brand" href="#top" aria-label="Kemix, inicio">
+			<img src="assets/logo.svg" alt="" width="30" height="30">
+			<span>kemix<b>.</b></span>
+		</a>
+		<nav class="nav-links" id="nav-links" aria-label="Secciones">
+			<a href="#como-funciona">Cómo funciona</a>
+			<a href="#calidad">Calidad</a>
+			<a href="#dj">Para DJs</a>
+			<a href="#funciones">Funciones</a>
+			<a href="#faq">FAQ</a>
+		</nav>
+		<div class="nav-actions">
+			<a class="icon-btn" href="https://github.com/vynzk/kemix" aria-label="Kemix en GitHub">
+				<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-github"/></svg>
+			</a>
+			<a class="btn btn-primary btn-sm" href="#descargar">Descargar</a>
+			<button class="icon-btn menu-btn" type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="nav-links">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+			</button>
+		</div>
+	</div>
+</header>
+
+<main id="contenido">
+
+<!-- ============================== Hero ============================== -->
+<section class="hero" id="top">
+	<div class="hero-bg" aria-hidden="true">
+		<div class="hero-grid"></div>
+		<div class="hero-glow"></div>
+		<div class="hero-glow hero-glow-2"></div>
+	</div>
+
+	<div class="wrap hero-inner">
+		<a class="pill" href="#dj" style="--i:0">
+			<span class="pill-tag">v0.2.0</span>
+			<span>Nuevo: clave y BPM de cada tema</span>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+		</a>
+		<h1 class="hero-title" style="--i:1">Tus playlists,<br><span class="shine">sin pérdida.</span></h1>
+		<p class="hero-sub" style="--i:2">
+			Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud, encuentra cada tema y lo
+			descarga en FLAC hasta <span class="nw">24-bit/192&nbsp;kHz</span>, o en AIFF y WAV para mezclar. Con carátula, clave y BPM.
+		</p>
+		<div class="cta-row" style="--i:3">
+			<a class="btn btn-primary btn-lg" data-dl="primary" href="https://github.com/vynzk/kemix/releases/latest">
+				<svg class="os-icon" viewBox="0 0 24 24" aria-hidden="true"><use data-os-icon href="#i-windows"/></svg>
+				<span data-dl-label>Descargar para Windows</span>
+			</a>
+			<a class="btn btn-ghost btn-lg" href="https://github.com/vynzk/kemix">
+				<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-github"/></svg>
+				Ver en GitHub
+			</a>
+		</div>
+		<p class="hero-meta" style="--i:4">
+			<span>Windows y Linux</span><i></i><span data-version>v0.2.0</span><i></i><span>Nada más que instalar</span>
+		</p>
+	</div>
+
+	<!-- Maqueta de la app: la pantalla de una playlist, con su cola de descargas en marcha -->
+	<div class="wrap shot" id="shot">
+		<div class="shot-tilt">
+			<div class="shot-scale">
+				<div class="app" role="img" aria-label="Kemix con una playlist abierta: cada tema muestra su BPM, su clave en Camelot, de qué servicio viene, su calidad y el estado de la descarga.">
+					<div class="app-titlebar">
+						<span class="app-wintitle"><img src="assets/logo.svg" alt="" width="14" height="14">Kemix</span>
+						<span class="win-ctrls"><i class="wc-min"></i><i class="wc-max"></i><i class="wc-close"></i></span>
+					</div>
+					<div class="app-body">
+						<div class="app-side">
+							<div class="app-brand">kemix<span>.</span></div>
+							<ul class="app-nav">
+								<li class="on">Biblioteca</li>
+								<li>Buscar</li>
+								<li>Revisión <b>1</b></li>
+								<li>Descargas <b data-live="badge">4</b></li>
+								<li>Cuentas</li>
+								<li>Ajustes</li>
+							</ul>
+							<div class="app-side-foot"><p>4 cuentas conectadas</p></div>
+						</div>
+						<div class="app-main">
+							<div class="app-scroll">
+								<p class="app-back">← Biblioteca</p>
+								<div class="app-head">
+									<div class="app-cover"><i></i></div>
+									<div class="app-head-info">
+										<span class="app-svc"><i style="--c:#1ed760"></i>Spotify</span>
+										<p class="app-h1">Sunset Warm-up</p>
+										<p class="app-meta">Vynzk · 24 temas · <span class="zinc2"><span data-live="done">19</span> descargados</span><span data-live="active-wrap"> · <span data-live="active">4</span> en curso</span> · <span class="t-amber">1 por revisar</span></p>
+									</div>
+									<div class="app-actions">
+										<span class="app-btn">Volver a leer</span>
+										<span class="app-ctl"><span>Descargar desde</span><span class="app-select">Automático</span></span>
+										<span class="app-ctl"><span>Calidad y formato</span><span class="app-select">FLAC · máxima disponible</span></span>
+										<span class="app-btn">Escanear calidad</span>
+										<span class="app-btn">Clave y BPM</span>
+										<span class="app-btn pri">Descargar faltantes</span>
+									</div>
+								</div>
+								<div class="app-selrow"><span>Marca temas para descargar solo esos</span><span>Seleccionar no descargados</span></div>
+								<table class="app-table">
+									<thead>
+										<tr><th class="c-chk"><i class="cb"></i></th><th class="c-num">#</th><th>Tema</th><th class="c-r w-bpm">BPM</th><th class="w-key">Clave</th><th class="w-src">Fuente</th><th class="w-q">Calidad</th><th class="w-st">Estado</th><th class="c-r w-dur">Dur.</th><th class="c-end"></th></tr>
+									</thead>
+									<tbody>
+										<tr class="playing">
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num"><span class="playbtn on">▶</span></td>
+											<td class="c-track"><p class="t">Nightfall Avenue</p><p class="a">Lumen Vale</p></td>
+											<td class="c-r">122</td>
+											<td><span class="kp" style="background:hsl(330 65% 30%)">8A</span><span class="ka">Am</span></td>
+											<td class="c-src">Qobuz <span class="mut">Auto · 98%</span></td>
+											<td class="c-q"><span class="t-sky">FLAC 24-bit/96 kHz</span><span class="z5"> · Qobuz</span></td>
+											<td><span class="st st-done">Listo</span></td>
+											<td class="c-r mut">6:12</td><td class="c-end"></td>
+										</tr>
+										<tr>
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">2</td>
+											<td class="c-track"><p class="t">Glass Hours</p><p class="a">Mira Okafor, Teo Lindqvist</p></td>
+											<td class="c-r">124</td>
+											<td><span class="kp" style="background:hsl(240 65% 30%)">5A</span><span class="ka">Cm</span></td>
+											<td class="c-src">Qobuz <span class="mut">Auto · 100%</span></td>
+											<td class="c-q"><span class="t-emerald">FLAC 16-bit/44.1 kHz</span><span class="z5"> · Qobuz</span></td>
+											<td><span class="st st-done">Listo</span></td>
+											<td class="c-r mut">5:48</td><td class="c-end"></td>
+										</tr>
+										<tr data-anim="downloading" data-q="FLAC 16-bit/44.1 kHz" data-tone="emerald" data-svc="Deezer">
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">3</td>
+											<td class="c-track"><p class="t">Paper Satellites</p><p class="a">The Quiet Engines</p></td>
+											<td class="c-r">118</td>
+											<td><span class="kp" style="background:hsl(60 65% 38%)">11B</span><span class="ka">A</span></td>
+											<td class="c-src">Deezer <span class="mut">Auto · 96%</span></td>
+											<td class="c-q"><span class="mut">máx. <span class="t-emerald">FLAC 16-bit/44.1 kHz</span></span></td>
+											<td class="c-st"><span class="st st-downloading">Bajando</span></td>
+											<td class="c-r mut">4:31</td><td class="c-end"></td>
+										</tr>
+										<tr data-anim="downloading" data-q="FLAC 24-bit/192 kHz" data-tone="sky" data-svc="Qobuz">
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">4</td>
+											<td class="c-track"><p class="t">Saltwater Static</p><p class="a">Noa Brandt</p></td>
+											<td class="c-r">126</td>
+											<td><span class="kp" style="background:hsl(150 65% 30%)">2A</span><span class="ka">E♭m</span></td>
+											<td class="c-src">Qobuz <span class="mut">Auto · 94%</span></td>
+											<td class="c-q"><span class="mut">máx. <span class="t-sky">FLAC 24-bit/192 kHz</span></span></td>
+											<td class="c-st"><span class="st st-downloading">Bajando</span></td>
+											<td class="c-r mut">7:05</td><td class="c-end"></td>
+										</tr>
+										<tr data-anim="matching" data-q="FLAC 24-bit/48 kHz" data-tone="sky" data-svc="Qobuz">
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">5</td>
+											<td class="c-track"><p class="t">Orchard Lights</p><p class="a">Calder &amp; Wren</p></td>
+											<td class="c-r">120</td>
+											<td><span class="kp" style="background:hsl(30 65% 30%)">10A</span><span class="ka">Bm</span></td>
+											<td class="c-src">Qobuz <span class="mut">Elegido · 100%</span></td>
+											<td class="c-q"><span class="mut">máx. <span class="t-sky">FLAC 24-bit/48 kHz</span></span></td>
+											<td class="c-st"><span class="st st-matching">Buscando</span></td>
+											<td class="c-r mut">6:40</td><td class="c-end"></td>
+										</tr>
+										<tr data-anim="queued" data-q="FLAC 16-bit/44.1 kHz" data-tone="emerald" data-svc="Deezer">
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">6</td>
+											<td class="c-track"><p class="t">Low Tide Club</p><p class="a">Ivo Marchetti</p></td>
+											<td class="c-r">123</td>
+											<td><span class="kp" style="background:hsl(0 65% 38%)">9B</span><span class="ka">G</span></td>
+											<td class="c-src">Deezer <span class="mut">Auto · 91%</span></td>
+											<td class="c-q"><span class="mut">máx. <span class="t-emerald">FLAC 16-bit/44.1 kHz</span></span></td>
+											<td class="c-st"><span class="st st-queued">En cola</span></td>
+											<td class="c-r mut">5:22</td><td class="c-end"></td>
+										</tr>
+										<tr>
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">7</td>
+											<td class="c-track"><p class="t">Radio Seraphim (Extended Mix)</p><p class="a">Kasia Dunmore</p></td>
+											<td class="c-r mut">≈125</td>
+											<td><span class="kp rough" style="background:hsl(210 65% 30%)">≈4A</span><span class="ka">Fm</span></td>
+											<td class="c-src">Qobuz <span class="mut">Dudoso · 82%</span></td>
+											<td class="c-q"><span class="mut">máx. <span class="t-sky">FLAC 24-bit/44.1 kHz</span></span></td>
+											<td><span class="st st-review">Revisar</span></td>
+											<td class="c-r mut">7:58</td><td class="c-end"></td>
+										</tr>
+										<tr>
+											<td class="c-chk"><i class="cb"></i></td>
+											<td class="c-num">8</td>
+											<td class="c-track"><p class="t">Warehouse Bloom</p><p class="a">Selim Arda</p></td>
+											<td class="c-r">128</td>
+											<td><span class="kp" style="background:hsl(300 65% 30%)">7A</span><span class="ka">Dm</span></td>
+											<td class="c-src">SoundCloud <span class="mut">Auto · 92%</span></td>
+											<td class="c-q"><span class="t-amber">AAC 160 kbps</span><span class="z5"> · SoundCloud</span></td>
+											<td><span class="st st-done">Listo</span></td>
+											<td class="c-r mut">6:03</td><td class="c-end"></td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+							<div class="app-player">
+								<div class="app-thumb"><i></i></div>
+								<div class="app-player-info">
+									<p class="t">Nightfall Avenue</p>
+									<p class="a">Lumen Vale</p>
+									<p class="z5">YouTube: Lumen Vale - Nightfall Avenue (Official Audio)</p>
+									<div class="app-transport">
+										<span class="tbtn">❚❚</span>
+										<span class="time" data-live="time">1:42</span>
+										<span class="range"><i data-live="seek" style="width:27%"></i></span>
+										<span class="time">6:12</span>
+										<span class="vol">🔊</span>
+										<span class="range range-vol"><i style="width:70%"></i></span>
+									</div>
+								</div>
+								<div class="app-player-end"><span>Abrir ↗</span><span class="x">✕</span></div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="wrap">
+		<dl class="stats" data-reveal>
+			<div><dt>6</dt><dd>servicios: Spotify, YouTube Music, Qobuz, Deezer, SoundCloud y Soundeo</dd></div>
+			<div><dt>24-bit<small>/192 kHz</small></dt><dd>FLAC Hi-Res desde Qobuz, o AIFF y WAV para DJ</dd></div>
+			<div><dt>90<small>%</small></dt><dd>de coincidencia para bajar sin preguntarte. Lo demás, a Revisión</dd></div>
+			<div><dt>0</dt><dd>programas extra: yt-dlp y ffmpeg se bajan solos, verificados</dd></div>
+		</dl>
+	</div>
+</section>
+
+<!-- ============================== Cómo funciona ============================== -->
+<section class="section" id="como-funciona">
+	<div class="wrap">
+		<div class="section-head center" data-reveal>
+			<p class="eyebrow">Cómo funciona</p>
+			<h2 class="h2">De cualquier servicio,<br>a tu disco.</h2>
+			<p class="lead">
+				Conectas tus cuentas una vez. Kemix lee tus playlists, busca cada tema donde mejor suena y lo deja en tu
+				carpeta de música, con tags, carátula y un <code>.m3u8</code> por playlist.
+			</p>
+		</div>
+
+		<div class="flow" id="flow" data-reveal>
+			<svg class="flow-svg" aria-hidden="true"></svg>
+			<div class="flow-col flow-src">
+				<p class="flow-label">Tus playlists de</p>
+				<ul>
+					<li class="chip" style="--c:#1ed760"><i></i>Spotify</li>
+					<li class="chip" style="--c:#ff3b30"><i></i>YouTube Music</li>
+					<li class="chip" style="--c:#ff5500"><i></i>SoundCloud</li>
+					<li class="chip" style="--c:#4b8bf5"><i></i>Qobuz</li>
+					<li class="chip" style="--c:#a238ff"><i></i>Deezer</li>
+				</ul>
+			</div>
+			<div class="flow-hub">
+				<div class="hub-disc"><img src="assets/logo.svg" alt="" width="104" height="104"></div>
+				<p class="hub-title">Matching</p>
+				<p class="hub-sub">ISRC <span>→</span> título, artista y duración</p>
+			</div>
+			<div class="flow-col flow-dst">
+				<p class="flow-label">Se descargan desde</p>
+				<ul>
+					<li class="chip" style="--c:#4b8bf5"><i></i>Qobuz<small>FLAC hasta 24-bit/192 kHz</small></li>
+					<li class="chip" style="--c:#a238ff"><i></i>Deezer<small>FLAC 16-bit/44.1 kHz</small></li>
+					<li class="chip" style="--c:#f5a623"><i></i>Soundeo<small>WAV · AIFF · MP3 320</small></li>
+					<li class="chip" style="--c:#ff5500"><i></i>SoundCloud<small>Respaldo · original o AAC</small></li>
+					<li class="chip" style="--c:#ff3b30"><i></i>YouTube<small>Respaldo · AAC</small></li>
+				</ul>
+			</div>
+		</div>
+
+		<ol class="steps">
+			<li class="card" data-reveal>
+				<span class="step-n">01</span>
+				<h3>Conecta tus cuentas</h3>
+				<p>Inicia sesión en una ventana dentro de Kemix o carga un <code>cookies.txt</code>. Spotify funciona con cualquier cuenta, sin Premium. Las credenciales quedan cifradas en tu PC.</p>
+			</li>
+			<li class="card" data-reveal>
+				<span class="step-n">02</span>
+				<h3>Kemix encuentra cada tema</h3>
+				<p>Si la playlist ya es de Qobuz o Deezer, va directo. Si no, busca por ISRC y, si no hay, por título, artista y duración. Lo que no llega al 90% espera en Revisión.</p>
+			</li>
+			<li class="card" data-reveal>
+				<span class="step-n">03</span>
+				<h3>Descarga y listo</h3>
+				<p>Una cola que sigue aunque cierres la app, con 3 descargas a la vez y 3 reintentos. Cada tema queda numerado, con su artista, título, tags y carátula.</p>
+			</li>
+		</ol>
+	</div>
+</section>
+
+<!-- ============================== Calidad ============================== -->
+<section class="section" id="calidad">
+	<div class="wrap split">
+		<div class="split-text" data-reveal>
+			<p class="eyebrow">Calidad</p>
+			<h2 class="h2">Sabes cómo va a sonar antes de bajarlo.</h2>
+			<p class="lead">
+				«Escanear calidad» busca cada tema en el proveedor elegido sin descargar nada y te dice en qué calidad
+				saldría con tu cuenta. Si convertir no mejora la fuente, te avisa.
+			</p>
+			<ul class="checks">
+				<li>Un solo selector: FLAC, AIFF, WAV o MP3, en Ajustes o en cada playlist.</li>
+				<li>Solo te ofrece lo que tu cuenta puede dar. Si un tema no llega, baja en la mejor calidad que tenga por debajo.</li>
+				<li>Al terminar ves la calidad real, leída del archivo, y de qué proveedor vino.</li>
+			</ul>
+		</div>
+
+		<div class="qdemo" id="qdemo" data-reveal>
+			<p class="qdemo-label">Prueba el selector de calidad y formato</p>
+			<div class="seg" role="radiogroup" aria-label="Calidad y formato">
+				<button type="button" role="radio" aria-checked="true" data-preset="flac">FLAC · máxima</button>
+				<button type="button" role="radio" aria-checked="false" data-preset="aiff">AIFF · máxima</button>
+				<button type="button" role="radio" aria-checked="false" data-preset="wav">WAV · 16-bit/44.1</button>
+				<button type="button" role="radio" aria-checked="false" data-preset="mp3">MP3 320 kbps</button>
+			</div>
+			<div class="qcard" aria-live="polite">
+				<div class="qsum">
+					<p>Escaneo de calidad terminado: 4 temas buscados. En qué calidad se descargarían:</p>
+					<div class="qsum-groups" data-q="summary">
+						<span class="t-sky">Hi-Res: 2</span><span class="t-emerald">Calidad CD: 1</span><span class="t-amber">Con pérdida: 1</span>
+					</div>
+				</div>
+				<div class="qrows" data-q="rows">
+					<div class="qrow"><div class="qt"><p>Nightfall Avenue</p><span><i style="--c:#4b8bf5"></i>Qobuz</span></div><div class="qq">máx. <span class="t-sky">FLAC 24-bit/96 kHz</span></div></div>
+					<div class="qrow"><div class="qt"><p>Saltwater Static</p><span><i style="--c:#4b8bf5"></i>Qobuz</span></div><div class="qq">máx. <span class="t-sky">FLAC 24-bit/192 kHz</span></div></div>
+					<div class="qrow"><div class="qt"><p>Glass Hours</p><span><i style="--c:#a238ff"></i>Deezer</span></div><div class="qq">máx. <span class="t-emerald">FLAC 16-bit/44.1 kHz</span></div></div>
+					<div class="qrow"><div class="qt"><p>Warehouse Bloom (Edit)</p><span><i style="--c:#ff3b30"></i>YouTube</span></div><div class="qq">máx. <span class="t-amber">AAC 128 kbps</span></div></div>
+				</div>
+			</div>
+			<p class="qdemo-legend"><span class="t-sky">Hi-Res</span><span class="t-emerald">Calidad CD</span><span class="t-amber">Con pérdida</span></p>
+		</div>
+	</div>
+</section>
+
+<!-- ============================== Para DJs ============================== -->
+<section class="section" id="dj">
+	<div class="wrap split split-rev">
+		<div class="wheel-wrap" data-reveal>
+			<div class="wheel" id="wheel">
+				<svg viewBox="-215 -215 430 430" aria-hidden="true">
+					<defs>
+						<radialGradient id="label-grad" cx="50%" cy="35%" r="70%">
+							<stop offset="0" stop-color="#1b1e23"/>
+							<stop offset="1" stop-color="#0d0e10"/>
+						</radialGradient>
+					</defs>
+					<circle r="213" fill="#0b0c0e" stroke="#24272c"/>
+					<circle r="209" fill="none" stroke="#c6f432" stroke-opacity=".35" stroke-dasharray="1 5"/>
+					<g class="wheel-keys">
+						<path data-k="1B" d="M52.8 -197.05A204 204 0 0 1 144.25 -144.25L106.07 -106.07A150 150 0 0 0 38.82 -144.89Z" fill="hsl(120 65% 38%)"/>
+						<path data-k="2B" d="M144.25 -144.25A204 204 0 0 1 197.05 -52.8L144.89 -38.82A150 150 0 0 0 106.07 -106.07Z" fill="hsl(150 65% 38%)"/>
+						<path data-k="3B" d="M197.05 -52.8A204 204 0 0 1 197.05 52.8L144.89 38.82A150 150 0 0 0 144.89 -38.82Z" fill="hsl(180 65% 38%)"/>
+						<path data-k="4B" d="M197.05 52.8A204 204 0 0 1 144.25 144.25L106.07 106.07A150 150 0 0 0 144.89 38.82Z" fill="hsl(210 65% 38%)"/>
+						<path data-k="5B" d="M144.25 144.25A204 204 0 0 1 52.8 197.05L38.82 144.89A150 150 0 0 0 106.07 106.07Z" fill="hsl(240 65% 38%)"/>
+						<path data-k="6B" d="M52.8 197.05A204 204 0 0 1 -52.8 197.05L-38.82 144.89A150 150 0 0 0 38.82 144.89Z" fill="hsl(270 65% 38%)"/>
+						<path data-k="7B" d="M-52.8 197.05A204 204 0 0 1 -144.25 144.25L-106.07 106.07A150 150 0 0 0 -38.82 144.89Z" fill="hsl(300 65% 38%)"/>
+						<path data-k="8B" d="M-144.25 144.25A204 204 0 0 1 -197.05 52.8L-144.89 38.82A150 150 0 0 0 -106.07 106.07Z" fill="hsl(330 65% 38%)"/>
+						<path data-k="9B" d="M-197.05 52.8A204 204 0 0 1 -197.05 -52.8L-144.89 -38.82A150 150 0 0 0 -144.89 38.82Z" fill="hsl(0 65% 38%)"/>
+						<path data-k="10B" d="M-197.05 -52.8A204 204 0 0 1 -144.25 -144.25L-106.07 -106.07A150 150 0 0 0 -144.89 -38.82Z" fill="hsl(30 65% 38%)"/>
+						<path data-k="11B" d="M-144.25 -144.25A204 204 0 0 1 -52.8 -197.05L-38.82 -144.89A150 150 0 0 0 -106.07 -106.07Z" fill="hsl(60 65% 38%)"/>
+						<path data-k="12B" d="M-52.8 -197.05A204 204 0 0 1 52.8 -197.05L38.82 -144.89A150 150 0 0 0 -38.82 -144.89Z" fill="hsl(90 65% 38%)"/>
+						<path data-k="1A" d="M38.31 -142.96A148 148 0 0 1 104.65 -104.65L67.88 -67.88A96 96 0 0 0 24.85 -92.73Z" fill="hsl(120 65% 30%)"/>
+						<path data-k="2A" d="M104.65 -104.65A148 148 0 0 1 142.96 -38.31L92.73 -24.85A96 96 0 0 0 67.88 -67.88Z" fill="hsl(150 65% 30%)"/>
+						<path data-k="3A" d="M142.96 -38.31A148 148 0 0 1 142.96 38.31L92.73 24.85A96 96 0 0 0 92.73 -24.85Z" fill="hsl(180 65% 30%)"/>
+						<path data-k="4A" d="M142.96 38.31A148 148 0 0 1 104.65 104.65L67.88 67.88A96 96 0 0 0 92.73 24.85Z" fill="hsl(210 65% 30%)"/>
+						<path data-k="5A" d="M104.65 104.65A148 148 0 0 1 38.31 142.96L24.85 92.73A96 96 0 0 0 67.88 67.88Z" fill="hsl(240 65% 30%)"/>
+						<path data-k="6A" d="M38.31 142.96A148 148 0 0 1 -38.31 142.96L-24.85 92.73A96 96 0 0 0 24.85 92.73Z" fill="hsl(270 65% 30%)"/>
+						<path data-k="7A" d="M-38.31 142.96A148 148 0 0 1 -104.65 104.65L-67.88 67.88A96 96 0 0 0 -24.85 92.73Z" fill="hsl(300 65% 30%)"/>
+						<path data-k="8A" d="M-104.65 104.65A148 148 0 0 1 -142.96 38.31L-92.73 24.85A96 96 0 0 0 -67.88 67.88Z" fill="hsl(330 65% 30%)"/>
+						<path data-k="9A" d="M-142.96 38.31A148 148 0 0 1 -142.96 -38.31L-92.73 -24.85A96 96 0 0 0 -92.73 24.85Z" fill="hsl(0 65% 30%)"/>
+						<path data-k="10A" d="M-142.96 -38.31A148 148 0 0 1 -104.65 -104.65L-67.88 -67.88A96 96 0 0 0 -92.73 -24.85Z" fill="hsl(30 65% 30%)"/>
+						<path data-k="11A" d="M-104.65 -104.65A148 148 0 0 1 -38.31 -142.96L-24.85 -92.73A96 96 0 0 0 -67.88 -67.88Z" fill="hsl(60 65% 30%)"/>
+						<path data-k="12A" d="M-38.31 -142.96A148 148 0 0 1 38.31 -142.96L24.85 -92.73A96 96 0 0 0 -24.85 -92.73Z" fill="hsl(90 65% 30%)"/>
+					</g>
+					<g class="wheel-labels">
+						<text x="88.5" y="-153.29" font-size="15">1B</text>
+						<text x="153.29" y="-88.5" font-size="15">2B</text>
+						<text x="177" y="0" font-size="15">3B</text>
+						<text x="153.29" y="88.5" font-size="15">4B</text>
+						<text x="88.5" y="153.29" font-size="15">5B</text>
+						<text x="0" y="177" font-size="15">6B</text>
+						<text x="-88.5" y="153.29" font-size="15">7B</text>
+						<text x="-153.29" y="88.5" font-size="15">8B</text>
+						<text x="-177" y="0" font-size="15">9B</text>
+						<text x="-153.29" y="-88.5" font-size="15">10B</text>
+						<text x="-88.5" y="-153.29" font-size="15">11B</text>
+						<text x="0" y="-177" font-size="15">12B</text>
+						<text x="61" y="-105.66" font-size="14">1A</text>
+						<text x="105.66" y="-61" font-size="14">2A</text>
+						<text x="122" y="0" font-size="14">3A</text>
+						<text x="105.66" y="61" font-size="14">4A</text>
+						<text x="61" y="105.66" font-size="14">5A</text>
+						<text x="0" y="122" font-size="14">6A</text>
+						<text x="-61" y="105.66" font-size="14">7A</text>
+						<text x="-105.66" y="61" font-size="14">8A</text>
+						<text x="-122" y="0" font-size="14">9A</text>
+						<text x="-105.66" y="-61" font-size="14">10A</text>
+						<text x="-61" y="-105.66" font-size="14">11A</text>
+						<text x="0" y="-122" font-size="14">12A</text>
+					</g>
+					<circle r="92" fill="url(#label-grad)" stroke="#24272c"/>
+					<g fill="none" stroke="#fff" stroke-opacity=".05"><circle r="84"/><circle r="76"/><circle r="68"/></g>
+				</svg>
+				<div class="wheel-sheen" aria-hidden="true"></div>
+				<div class="wheel-center" aria-live="polite">
+					<span class="wc-key" data-w="key" style="--c:hsl(330 65% 30%)">8A</span>
+					<span class="wc-name" data-w="name">Am</span>
+					<span class="wc-open">Open Key <b data-w="open">1m</b></span>
+				</div>
+			</div>
+			<p class="wheel-hint"><span class="on-hover">Pasa el cursor por la rueda</span><span class="on-touch">Toca una clave</span>: las vecinas mezclan en armonía.</p>
+		</div>
+
+		<div class="split-text" data-reveal>
+			<p class="eyebrow">Para DJs</p>
+			<h2 class="h2">Clave y BPM en cada&nbsp;tema.</h2>
+			<p class="lead">
+				La clave en Camelot con el color de su lugar en la rueda, en notación musical u Open Key. Al terminar cada
+				descarga se escribe en los tags, junto con el BPM, donde la leen rekordbox, Serato y Traktor.
+			</p>
+			<p class="sources-title">Cada dato sale del primer lugar que lo tiene:</p>
+			<ol class="sources">
+				<li><b>Los tags del archivo</b>, si ya venían.</li>
+				<li><b><a class="ext" href="https://getsongbpm.com">GetSongBPM</a></b>, con tu API key gratuita.</li>
+				<li><b>Deezer</b>, para el BPM.</li>
+				<li><b>El análisis de Kemix</b>: decodifica el audio y estima tempo y clave. Si sale de la vista previa de 30&nbsp;s, se marca con&nbsp;≈.</li>
+				<li><b>AcousticBrainz</b>, si no hubo audio que analizar.</li>
+			</ol>
+			<div class="tags">
+				<span>AIFF y WAV a 16-bit/44.1 kHz para equipos que no leen Hi-Res</span>
+				<span>El WAV o AIFF de Soundeo, sin reconvertir</span>
+				<span><b class="t-amber">BPM en amarillo</b> si una opción no coincide con el original</span>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- ============================== Funciones ============================== -->
+<section class="section" id="funciones">
+	<div class="wrap">
+		<div class="section-head" data-reveal>
+			<p class="eyebrow">Funciones</p>
+			<h2 class="h2">Pensado para no perder<br>ni un tema.</h2>
+		</div>
+
+		<div class="bento">
+			<article class="card b-wide" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 11 3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></div>
+				<h3>Cuando hay dudas, eliges tú</h3>
+				<p>Lo dudoso espera en Revisión con sus opciones, su clave y su BPM. Escucha cada una y quédate con la buena.</p>
+				<div class="review" aria-hidden="true">
+					<div class="rv-orig">
+						<span class="rv-k">Original</span>
+						<p><b>Radio Seraphim (Extended Mix)</b> · Kasia Dunmore · 7:58</p>
+						<span class="rv-feat">125 BPM <span class="kp" style="background:hsl(210 65% 30%)">4A</span></span>
+					</div>
+					<div class="rv-opt">
+						<span class="playbtn">▶</span>
+						<span class="dot" style="--c:#4b8bf5"></span>
+						<p><b>Radio Seraphim (Extended)</b><small>Qobuz · 7:58</small></p>
+						<span class="rv-feat">125 BPM <span class="kp" style="background:hsl(210 65% 30%)">4A</span></span>
+						<span class="rv-pct">82%</span><span class="rv-use pri">Usar</span>
+					</div>
+					<div class="rv-opt">
+						<span class="playbtn">▶</span>
+						<span class="dot" style="--c:#f5a623"></span>
+						<p><b>Radio Seraphim (Dub Mix)</b><small>Soundeo · 7:12</small></p>
+						<span class="rv-feat"><span class="t-amber">118 BPM</span> <span class="kp" style="background:hsl(210 65% 30%)">4A</span></span>
+						<span class="rv-pct">71%</span><span class="rv-use">Usar</span>
+					</div>
+				</div>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg></div>
+				<h3>Spotify sin Premium</h3>
+				<p>Inicia sesión con cualquier cuenta y Kemix lee tu música desde el reproductor web. Con Premium y una app propia, hace aún más.</p>
+				<ul class="perm" aria-label="Qué permite cada tipo de cuenta de Spotify">
+					<li>Playlists y Me gusta<b>Gratis</b></li>
+					<li>Buscar temas<b>Gratis</b></li>
+					<li>Crear playlists<b class="pro">Premium</b></li>
+					<li>ISRC para el matching<b class="pro">Premium</b></li>
+				</ul>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="5" height="7" rx="2"/><rect x="16" y="14" width="5" height="7" rx="2"/></svg></div>
+				<h3>Escucha antes de bajar</h3>
+				<p>El ▶ de cada tema lo reproduce con YouTube integrado. En Revisión, también con SoundCloud o el clip de Soundeo.</p>
+				<div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12M3 12h8M3 18h6"/><path d="M18 9v11m0 0-3-3m3 3 3-3"/></svg></div>
+				<h3>Una cola que no se pierde</h3>
+				<p>Sigue después de cerrar la app. Si un tema ya está en otra playlist, se enlaza en vez de bajarse otra vez.</p>
+				<div class="bars" aria-hidden="true">
+					<div><span>Paper Satellites</span><i style="--w:100%"></i></div>
+					<div><span>Saltwater Static</span><i class="run" style="--w:64%"></i></div>
+					<div><span>Orchard Lights</span><i class="run" style="--w:31%"></i></div>
+				</div>
+			</article>
+
+			<article class="card b-wide" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+				<h3>Ordenado como debe</h3>
+				<p>Cada playlist en su carpeta, cada tema numerado con artista y título, y un <code>.m3u8</code> para abrirla en cualquier reproductor.</p>
+				<pre class="tree" aria-label="Ejemplo de carpeta de descargas"><span class="tr-dim">~/Music/Kemix/</span>
+└─ <span class="tr-dir">Sunset Warm-up/</span>
+   ├─ 01 - Lumen Vale - Nightfall Avenue.<span class="tr-ext">flac</span>
+   ├─ 02 - Mira Okafor, Teo Lindqvist - Glass Hours.<span class="tr-ext">flac</span>
+   ├─ 03 - The Quiet Engines - Paper Satellites.<span class="tr-ext">flac</span>
+   ├─ <span class="tr-dim">…</span>
+   └─ Sunset Warm-up.<span class="tr-m3u">m3u8</span></pre>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></div>
+				<h3>Busca y crea playlists</h3>
+				<p>Busca en cualquier servicio conectado, arma una playlist con orden y Kemix la crea como privada en tu cuenta.</p>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="m5.6 5.6 3.6 3.6m5.6 5.6 3.6 3.6m0-12.8-3.6 3.6m-5.6 5.6-3.6 3.6"/></svg></div>
+				<h3>Respaldo de YouTube y SoundCloud</h3>
+				<p>Para remixes, sets y artistas independientes que no están en Qobuz ni Deezer. Solo si lo pides, y avisando la calidad.</p>
+			</article>
+
+			<article class="card b-wide b-privacy" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+				<h3>Tus datos, en tu PC</h3>
+				<p>Base de datos local y credenciales cifradas por el sistema: DPAPI en Windows, el llavero en Linux. El servidor interno solo escucha en tu equipo, con un token por sesión. No hay servidores de Kemix.</p>
+				<div class="privacy-chips" aria-hidden="true">
+					<span><i></i>127.0.0.1</span><span><i></i>SQLite local</span><span><i></i>Credenciales cifradas</span>
+				</div>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg></div>
+				<h3>Nada más que instalar</h3>
+				<p>yt-dlp y ffmpeg se bajan solos la primera vez que hacen falta, verificados con SHA-256. yt-dlp se revisa cada día.</p>
+			</article>
+		</div>
+	</div>
+</section>
+
+<!-- ============================== Código ============================== -->
+<section class="section" id="codigo">
+	<div class="wrap split split-top">
+		<div class="split-text" data-reveal>
+			<p class="eyebrow">Código</p>
+			<h2 class="h2">Bajo el capó.</h2>
+			<p class="lead">
+				Un monorepo en TypeScript. La lógica no sabe nada de Electron ni de HTTP, así que la misma app corre
+				como programa de escritorio o en el navegador.
+			</p>
+			<ul class="arch">
+				<li><code>packages/core</code><span>Conectores, matcher, cola de descargas y SQLite. Sin Electron ni HTTP.</span></li>
+				<li><code>packages/server</code><span>API REST y eventos SSE con Fastify, sobre core.</span></li>
+				<li><code>packages/ui</code><span>React, Vite y Tailwind. Solo habla HTTP con el server.</span></li>
+				<li><code>apps/desktop</code><span>Electron: arranca el server en 127.0.0.1 con un token por sesión.</span></li>
+			</ul>
+		</div>
+
+		<div data-reveal>
+			<div class="term" id="term">
+				<div class="term-bar">
+					<span class="term-dots"><i></i><i></i><i></i></span>
+					<div class="term-tabs" role="tablist" aria-label="Comandos">
+						<button type="button" role="tab" aria-selected="true" aria-controls="t-dev" id="tab-dev">Escritorio</button>
+						<button type="button" role="tab" aria-selected="false" aria-controls="t-web" id="tab-web" tabindex="-1">Navegador</button>
+						<button type="button" role="tab" aria-selected="false" aria-controls="t-dist" id="tab-dist" tabindex="-1">Ejecutables</button>
+					</div>
+					<button class="copy" type="button" aria-label="Copiar comandos">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
+						<span>Copiar</span>
+					</button>
+				</div>
+				<pre class="term-body" id="t-dev" role="tabpanel" aria-labelledby="tab-dev"><span class="p">$</span> git clone https://github.com/vynzk/kemix.git
+<span class="p">$</span> cd kemix &amp;&amp; npm install
+<span class="p">$</span> npm run dev  <span class="c"># Electron + UI con recarga en caliente</span></pre>
+				<pre class="term-body" id="t-web" role="tabpanel" aria-labelledby="tab-web" hidden><span class="p">$</span> npm install
+<span class="p">$</span> npm run dev:web  <span class="c"># servidor en :47800</span>
+<span class="c"># UI en http://localhost:5180</span></pre>
+				<pre class="term-body" id="t-dist" role="tabpanel" aria-labelledby="tab-dist" hidden><span class="p">$</span> npm ci
+<span class="p">$</span> npm run dist:win    <span class="c"># instalador .exe</span>
+<span class="p">$</span> npm run dist:linux  <span class="c"># AppImage y .deb</span></pre>
+			</div>
+			<ul class="stack" aria-label="Tecnologías">
+				<li>TypeScript</li><li>Electron</li><li>React</li><li>Vite</li><li>Tailwind CSS</li><li>Fastify</li><li>SQLite</li><li>Vitest</li><li>yt-dlp</li><li>ffmpeg</li>
+			</ul>
+		</div>
+	</div>
+</section>
+
+<!-- ============================== Descargar ============================== -->
+<section class="section" id="descargar">
+	<div class="wrap">
+		<div class="section-head center" data-reveal>
+			<p class="eyebrow">Descargar</p>
+			<h2 class="h2">Descarga Kemix.</h2>
+			<p class="lead">Versión <span data-version>v0.2.0</span> para Windows y Linux. Trae todo lo que necesita: no hace falta instalar Node, Python ni nada más.</p>
+		</div>
+
+		<div class="dl-grid">
+			<article class="card dl" data-os="win" data-reveal>
+				<div class="dl-head">
+					<svg class="dl-os" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-windows"/></svg>
+					<div><h3>Windows</h3><p>Windows 10 y 11 · Instalador</p></div>
+				</div>
+				<a class="btn btn-primary" data-dl="win" href="https://github.com/vynzk/kemix/releases/latest">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+					Descargar .exe
+				</a>
+				<p class="dl-note">El instalador no está firmado. Si aparece «Windows protegió su PC», pulsa <b>Más información</b> → <b>Ejecutar de todas formas</b>.</p>
+			</article>
+
+			<article class="card dl" data-os="linux" data-reveal>
+				<div class="dl-head">
+					<svg class="dl-os" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-linux"/></svg>
+					<div><h3>Linux · AppImage</h3><p>Un solo archivo, cualquier distro</p></div>
+				</div>
+				<a class="btn btn-ghost" data-dl="appimage" href="https://github.com/vynzk/kemix/releases/latest">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+					Descargar AppImage
+				</a>
+				<div class="cmd"><code>chmod +x <span class="nw" data-file="appimage">Kemix-0.2.0-x86_64.AppImage</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+			</article>
+
+			<article class="card dl" data-os="linux" data-reveal>
+				<div class="dl-head">
+					<svg class="dl-os" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>
+					<div><h3>Linux · .deb</h3><p>Ubuntu, Debian, Mint, Pop!_OS…</p></div>
+				</div>
+				<a class="btn btn-ghost" data-dl="deb" href="https://github.com/vynzk/kemix/releases/latest">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+					Descargar .deb
+				</a>
+				<div class="cmd"><code>sudo apt install <span class="nw" data-file="deb">./Kemix-0.2.0-amd64.deb</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+			</article>
+		</div>
+
+		<p class="dl-more" data-reveal>
+			<a href="https://github.com/vynzk/kemix/releases">Todas las versiones</a>
+			<i></i>
+			<a href="https://github.com/vynzk/kemix/blob/main/COMPILAR.md">Compilarlo tú mismo</a>
+		</p>
+	</div>
+</section>
+
+<!-- ============================== FAQ ============================== -->
+<section class="section" id="faq">
+	<div class="wrap faq-wrap">
+		<div class="section-head" data-reveal>
+			<p class="eyebrow">Preguntas</p>
+			<h2 class="h2">Preguntas frecuentes.</h2>
+		</div>
+		<div class="faq" data-reveal>
+			<details name="faq" open>
+				<summary>¿Necesito Spotify Premium?</summary>
+				<p>No. Con cualquier cuenta, «Iniciar sesión en Spotify» abre el reproductor web en una ventana y Kemix carga tus playlists y tus Me gusta, y permite buscar. Con Premium puedes usar una app propia de developer.spotify.com, que además crea playlists y lee el ISRC de cada tema.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Qué cuenta necesito para bajar en FLAC?</summary>
+				<p>Una de Qobuz o de Deezer. Kemix solo te ofrece las calidades que da tu cuenta: Qobuz llega hasta 24-bit/192&nbsp;kHz y el FLAC de Deezer es 16-bit/44.1&nbsp;kHz. Para WAV y AIFF también sirve Soundeo con una cuenta Premium.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Tengo que instalar algo más?</summary>
+				<p>No. El ejecutable trae todo: Electron, SQLite y la interfaz. yt-dlp (para YouTube y SoundCloud) y ffmpeg (para convertir a AIFF, WAV o MP3) se bajan solos de sus releases oficiales la primera vez que hacen falta, y se verifican con SHA-256.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Dónde quedan mis datos y mis contraseñas?</summary>
+				<p>En tu equipo: <code>%APPDATA%\@kemix\desktop</code> en Windows y <code>~/.config/@kemix/desktop</code> en Linux. Las credenciales se cifran con el sistema (DPAPI o el llavero de Linux). No hay servidores de Kemix: la app habla directamente con cada servicio.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Qué pasa con los temas que no encuentra?</summary>
+				<p>Los que no superan el 90% de coincidencia van a Revisión, con sus opciones, para que elijas tú. Los que no están en Qobuz ni Deezer se pueden bajar de YouTube o SoundCloud, solo si lo pides y con aviso de que no es calidad máxima.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Es una app oficial de estos servicios?</summary>
+				<p>No. Kemix no está afiliado a ninguno, y sus integraciones con YouTube Music, Spotify o Soundeo no son oficiales: pueden dejar de funcionar si cambian sus webs. Descargar desde estos servicios va contra sus términos de uso; Kemix es para uso personal.</p>
+			</details>
+		</div>
+	</div>
+</section>
+
+<!-- ============================== Cierre ============================== -->
+<section class="section final">
+	<div class="wrap">
+		<div class="final-card" data-reveal>
+			<div class="final-rings" aria-hidden="true"></div>
+			<img class="final-logo" src="assets/logo.svg" alt="" width="72" height="72">
+			<h2>Tus playlists,<br>sin pérdida.</h2>
+			<p>Kemix <span data-version>v0.2.0</span> para Windows y Linux.</p>
+			<div class="cta-row">
+				<a class="btn btn-dark btn-lg" href="#descargar">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+					Descargar Kemix
+				</a>
+				<a class="btn btn-outline-dark btn-lg" href="https://github.com/vynzk/kemix">Ver el código</a>
+			</div>
+		</div>
+	</div>
+</section>
+
+</main>
+
+<footer class="footer">
+	<div class="wrap footer-inner">
+		<div class="footer-brand">
+			<a class="brand" href="#top" aria-label="Kemix, inicio">
+				<img src="assets/logo.svg" alt="" width="26" height="26">
+				<span>kemix<b>.</b></span>
+			</a>
+			<p>Hecho por <a href="https://github.com/vynzk">Vynzk</a>.</p>
+		</div>
+		<nav class="footer-links" aria-label="Enlaces">
+			<a href="https://github.com/vynzk/kemix">GitHub</a>
+			<a href="https://github.com/vynzk/kemix/releases">Versiones</a>
+			<a href="https://github.com/vynzk/kemix#readme">Documentación</a>
+			<a href="https://github.com/vynzk/kemix/blob/main/COMPILAR.md">Compilar</a>
+		</nav>
+		<p class="footer-legal">
+			Kemix no está afiliado a Spotify, YouTube, Qobuz, Deezer, SoundCloud ni Soundeo; sus nombres son marcas de sus
+			dueños. Descargar desde estos servicios va contra sus términos de uso: Kemix es para uso personal.
+		</p>
+	</div>
+</footer>
+</body>
+</html>

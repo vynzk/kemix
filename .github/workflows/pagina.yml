@@ -1,0 +1,39 @@
+# Publica la página de presentación (carpeta site/) en GitHub Pages: https://vynzk.github.io/kemix/
+# - Una sola vez: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# - Después se publica sola con cada push a main que cambie site/, o a mano: Actions → "Página" → Run workflow.
+# La página es estática (HTML, CSS y JS sin build), así que solo se sube la carpeta tal cual.
+name: Página
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pagina.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Una publicación a la vez, sin cortar la que está en curso.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5

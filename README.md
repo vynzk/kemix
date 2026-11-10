@@ -4,6 +4,8 @@ App de escritorio para traer tus playlists de **Spotify, YouTube Music, Qobuz y 
 descargarlas en FLAC desde **Qobuz** (o **Deezer** como respaldo) usando [`lucida`](https://www.npmjs.com/package/lucida),
 o en WAV/AIFF desde **Soundeo** con una cuenta Premium.
 
+Página del proyecto: **[vynzk.github.io/kemix](https://vynzk.github.io/kemix/)**
+
 ## Uso
 
 ```bash
@@ -16,6 +18,9 @@ npm run dist       # ejecutable para el sistema actual en apps/desktop/release (
 ```
 
 Para crear los ejecutables de Windows y Linux (en tu PC o en GitHub Actions), ver [COMPILAR.md](COMPILAR.md).
+
+La página de presentación está en `site/` (HTML, CSS y JS estáticos, sin build) y se publica en GitHub Pages con
+[.github/workflows/pagina.yml](.github/workflows/pagina.yml).
 
 Los datos (base de datos SQLite y credenciales cifradas con DPAPI) se guardan en `%APPDATA%\@kemix\desktop`.
 Las descargas van a `~/Music/Kemix/<Playlist>/NN - Artista - Título.flac`, con un `.m3u8` por playlist.
