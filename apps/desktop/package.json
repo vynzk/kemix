@@ -1,6 +1,6 @@
 {
   "name": "@kemix/desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Trae tus playlists de Spotify, YouTube Music, Qobuz y Deezer y descárgalas en FLAC",
   "author": "Vynzk",
