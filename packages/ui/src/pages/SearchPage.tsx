@@ -6,23 +6,27 @@ import { SERVICE_COLOR, SERVICE_LABEL, cx, duration } from '../lib/format'
 import { Button, Cover, Empty, ErrorText, FreeDownloadLink, Input, PageHeader } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 import { GetSongBpmCredit, LookedUpFeatures } from '../components/Features'
+import { DownloadPicker, useDownloadChoice } from '../components/DownloadPicker'
+import { SoulseekSearch } from '../components/SoulseekSearch'
 import { useFeatureLookup, useGetSongBpm, useKeyNotation } from '../lib/hooks'
 
 type Drafts = Partial<Record<SourceService, SourceTrack[]>>
+/** Una pestaña de Buscar: el catálogo de un servicio, o la red Soulseek. */
+type SearchTab = SourceService | 'soulseek'
 
 export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist: (id: number) => void; onGoToAccounts: () => void }) {
 	const qc = useQueryClient()
 	const player = usePlayer()
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
-	// Catalogs to search and create playlists in: Soundeo and Soulseek only download, they have no playlists (Soulseek
-	// has its own search page).
-	const services = (state.data?.accounts ?? [])
-		.filter((a) => a.status === 'connected')
-		.map((a) => a.service)
-		.filter((s): s is SourceService => s !== 'soundeo' && s !== 'soulseek')
+	const connected = (state.data?.accounts ?? []).filter((a) => a.status === 'connected').map((a) => a.service)
+	// Catalogs to search and create playlists in: Soundeo only downloads and has no playlists; Soulseek has a tab of
+	// its own, for searching files.
+	const services = connected.filter((s): s is SourceService => s !== 'soundeo' && s !== 'soulseek')
+	const tabs: SearchTab[] = connected.includes('soulseek') ? [...services, 'soulseek'] : services
 
-	const [picked, setPicked] = useState<SourceService | null>(null)
-	const service = picked && services.includes(picked) ? picked : (services[0] ?? null)
+	const [picked, setPicked] = useState<SearchTab | null>(null)
+	const tab = picked && tabs.includes(picked) ? picked : (tabs[0] ?? null)
+	const service = tab && tab !== 'soulseek' ? tab : null
 	const [text, setText] = useState('')
 	const [query, setQuery] = useState('')
 	// Track ids only make sense inside their own service, so each service keeps its own draft.
@@ -72,16 +76,75 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 		}
 	})
 
-	if (state.data && !services.length) {
+	// Bajar desde aquí: como una playlist (proveedor, calidad y formato), a la playlist «Temas sueltos».
+	const choice = useDownloadChoice()
+	/** Temas ya puestos en la cola desde aquí (`servicio:id`). */
+	const [queued, setQueued] = useState<Set<string>>(() => new Set())
+	const download = useMutation({
+		mutationFn: (v: { service: SourceService; tracks: SourceTrack[] }) =>
+			api.downloadFromSearch(v.service, v.tracks, choice.request),
+		onSuccess: (_res, v) =>
+			setQueued((q) => {
+				const next = new Set(q)
+				for (const t of v.tracks) next.add(`${v.service}:${t.sourceId}`)
+				return next
+			}),
+		onSettled: () => qc.invalidateQueries({ queryKey: ['library'] })
+	})
+
+	if (state.data && !tabs.length) {
 		return (
 			<div>
 				<PageHeader title="Buscar" />
 				<Empty title="No hay cuentas conectadas">
-					Conecta Spotify, YouTube Music, Qobuz, Deezer o SoundCloud para buscar temas y crear playlists.
+					Conecta Spotify, YouTube Music, Qobuz, Deezer, SoundCloud o Soulseek para buscar temas, bajarlos y crear
+					playlists.
 					<div className="mt-4">
 						<Button onClick={onGoToAccounts}>Ir a Cuentas</Button>
 					</div>
 				</Empty>
+			</div>
+		)
+	}
+	if (!tab) return null
+
+	const tabBar = (
+		<div className="flex flex-wrap gap-2">
+			{tabs.map((s) => (
+				<button
+					key={s}
+					type="button"
+					onClick={() => {
+						setPicked(s)
+						create.reset()
+					}}
+					className={cx(
+						'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm',
+						s === tab ? 'border-accent/60 bg-zinc-800 text-zinc-50' : 'border-line text-muted hover:text-zinc-100'
+					)}
+				>
+					<span className="h-2 w-2 rounded-full" style={{ background: SERVICE_COLOR[s] }} />
+					{SERVICE_LABEL[s]}
+					{s !== 'soulseek' && !!drafts[s]?.length && <span className="text-xs text-accent">{drafts[s]!.length}</span>}
+				</button>
+			))}
+		</div>
+	)
+	const header = (
+		<PageHeader title="Buscar">
+			Busca temas en un servicio para bajarlos o armar una playlist nueva en tu cuenta de ese servicio, o archivos en la
+			red Soulseek.
+		</PageHeader>
+	)
+
+	if (tab === 'soulseek') {
+		return (
+			<div>
+				{header}
+				<div className="space-y-4 p-8">
+					{tabBar}
+					<SoulseekSearch onOpenPlaylist={onOpenPlaylist} />
+				</div>
 			</div>
 		)
 	}
@@ -100,29 +163,10 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 
 	return (
 		<div>
-			<PageHeader title="Buscar">Busca temas en un servicio y arma una playlist nueva en tu cuenta de ese servicio.</PageHeader>
+			{header}
 			<div className="flex flex-col gap-6 p-8 lg:flex-row lg:items-start">
 				<section className="min-w-0 flex-1 space-y-4">
-					<div className="flex flex-wrap gap-2">
-						{services.map((s) => (
-							<button
-								key={s}
-								type="button"
-								onClick={() => {
-									setPicked(s)
-									create.reset()
-								}}
-								className={cx(
-									'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm',
-									s === service ? 'border-accent/60 bg-zinc-800 text-zinc-50' : 'border-line text-muted hover:text-zinc-100'
-								)}
-							>
-								<span className="h-2 w-2 rounded-full" style={{ background: SERVICE_COLOR[s] }} />
-								{SERVICE_LABEL[s]}
-								{!!drafts[s]?.length && <span className="text-xs text-accent">{drafts[s]!.length}</span>}
-							</button>
-						))}
-					</div>
+					{tabBar}
 					<form
 						className="flex gap-2"
 						onSubmit={(e) => {
@@ -140,7 +184,22 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 							{results.isFetching ? 'Buscando…' : 'Buscar'}
 						</Button>
 					</form>
-					<ErrorText error={results.error} />
+					<div className="flex flex-wrap items-end gap-3 rounded-md border border-line bg-panel/60 px-3 py-2">
+						<DownloadPicker choice={choice} />
+						<p className="min-w-0 flex-1 text-xs text-muted">
+							Con «⬇ Bajar» el tema va a la playlist «Temas sueltos» y se baja como cualquier playlist: se busca en tus
+							servicios de descarga (o en el elegido) y lo dudoso pasa a Revisión.
+						</p>
+					</div>
+					{download.data && (
+						<p className="text-xs text-emerald-300">
+							Agregado a «Temas sueltos»; el progreso se ve en Descargas.{' '}
+							<button type="button" className="underline" onClick={() => onOpenPlaylist(download.data.playlistId)}>
+								Ver la playlist
+							</button>
+						</p>
+					)}
+					<ErrorText error={results.error ?? download.error} />
 					{query && results.data?.length === 0 && <p className="text-sm text-muted">Sin resultados para “{query}”.</p>}
 					{!!results.data?.length && (
 						<ul className="divide-y divide-line/60">
@@ -171,6 +230,15 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 											className="hidden w-40 shrink-0 justify-end sm:inline-flex"
 										/>
 										<span className="w-12 shrink-0 text-right text-xs text-muted">{duration(t.durationMs ?? null)}</span>
+										<Button
+											variant="ghost"
+											onClick={() => download.mutate({ service, tracks: [t] })}
+											disabled={queued.has(`${service}:${t.sourceId}`) || download.isPending}
+											title="Bajar este tema a la playlist «Temas sueltos», con el proveedor, la calidad y el formato elegidos arriba"
+											className="w-24 shrink-0"
+										>
+											{queued.has(`${service}:${t.sourceId}`) ? '✓ En cola' : '⬇ Bajar'}
+										</Button>
 										<Button
 											variant={added ? 'ghost' : 'default'}
 											onClick={() => toggle(t)}
@@ -258,6 +326,14 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 						</ol>
 					)}
 					<ErrorText error={create.error} />
+					<Button
+						className="w-full"
+						disabled={!draft.length || download.isPending}
+						onClick={() => download.mutate({ service, tracks: draft })}
+						title="Bajar estos temas a la playlist «Temas sueltos», sin crear una playlist en el servicio"
+					>
+						⬇ Bajar estos temas{draft.length ? ` (${draft.length})` : ''}
+					</Button>
 					<Button
 						variant="primary"
 						className="w-full"

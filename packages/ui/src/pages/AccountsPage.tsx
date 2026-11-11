@@ -654,7 +654,7 @@ function SoulseekNote({ connected, priority }: { connected: boolean; priority: D
 				</p>
 			)}
 			<p>
-				Busca y baja archivos sueltos en la pantalla <b className="text-zinc-300">Soulseek</b>.{' '}
+				Busca y baja archivos sueltos en la pestaña <b className="text-zinc-300">Soulseek</b> de Buscar.{' '}
 				{priority.includes('soulseek')
 					? `En las descargas automáticas se usa en el puesto ${priority.indexOf('soulseek') + 1} de la prioridad (Ajustes → Prioridad de servicios).`
 					: 'No está en la prioridad de descarga: elígelo al descargar una playlist, o añádelo en Ajustes → Prioridad de servicios.'}

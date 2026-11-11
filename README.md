@@ -102,9 +102,18 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   Al terminar cada descarga se analiza el archivo completo si algo venía de una vista previa, y la clave y el BPM se
   escriben en los tags (TKEY/TBPM o INITIALKEY/BPM, lo que leen rekordbox, Serato y Traktor); se puede desactivar en
   Ajustes. El BPM de Deezer y el del análisis a veces salen al doble o a la mitad del real.
-- **Buscar y crear playlists**: en "Buscar" eliges un servicio conectado, buscas temas, los agregas a una playlist nueva
-  (con orden) y se crea como privada en tu cuenta de ese servicio; luego aparece en la Biblioteca. Spotify pide permiso
-  de escritura: las conexiones hechas antes de esta función deben desconectarse y volver a conectarse.
+- **Buscar, bajar y crear playlists**: en "Buscar" eliges un servicio conectado y buscas temas. Con ellos puedes:
+  - **Bajarlos** («⬇ Bajar» en cada tema, o «Bajar estos temas» con los agregados). Van a la playlist **Temas
+    sueltos** de la Biblioteca y se bajan como cualquier playlist: con «Descargar desde» y «Calidad y formato», el
+    mismo matching (Qobuz, Deezer… en el orden de Ajustes) y lo dudoso a Revisión.
+  - **Armar una playlist nueva** (con orden), que se crea como privada en tu cuenta de ese servicio y luego aparece en
+    la Biblioteca. Spotify pide permiso de escritura: las conexiones hechas antes de esta función deben desconectarse
+    y volver a conectarse.
+
+  Con Soulseek conectado, Buscar tiene además la pestaña **Soulseek** (ver más abajo).
+- **Playlists de Kemix**: lo que bajas fuera de una playlist de un servicio queda en una playlist propia de Kemix
+  («Temas sueltos», «Soulseek», «SoundCloud gratis»), con su carpeta y su `.m3u8`. Ningún servicio las sincroniza;
+  un tema que ya estaba en otra playlist se reutiliza.
 - **Escuchar**: el botón ▶ de cada tema busca el video en YouTube y lo reproduce con el reproductor de YouTube integrado.
 - **YouTube como respaldo**: los temas que no están en Qobuz ni Deezer se pueden bajar desde YouTube, solo si lo pides
   (en la playlist o en Revisión) y con aviso de que no es calidad máxima (AAC ~128 kbps). Usa
@@ -159,10 +168,10 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
     se puede buscar a mano en Soulseek. Entre archivos igual de parecidos elige primero por calidad (sin pérdida, salvo
     que la calidad de Ajustes sea MP3), luego quien puede enviarlo ya, con la cola más corta y más rápido. Los tags y
     el nombre del archivo salen del tema de la playlist, no de la ruta.
-  - *Pantalla Soulseek* (aparece con la cuenta conectada): búsqueda libre, con los resultados llegando en vivo durante
+  - *Pestaña Soulseek de Buscar* (con la cuenta conectada): búsqueda libre, con los resultados llegando en vivo durante
     unos segundos, agrupados por usuario y carpeta, con formato, calidad, tamaño, duración y si el usuario puede
-    enviarlo ya. "Descargar" agrega el archivo a la playlist local **Soulseek** de la Biblioteca y lo pone en la cola,
-    con la calidad y el formato de Ajustes (AIFF, WAV y MP3 se convierten como siempre).
+    enviarlo ya. "Descargar" agrega el archivo a la playlist **Soulseek** de la Biblioteca y lo pone en la cola, con la
+    calidad y el formato elegidos ahí (AIFF, WAV y MP3 se convierten como siempre).
   - *Al descargar*: se pide el archivo y se espera en la cola de ese usuario hasta 3 minutos (o menos, si dice que hay
     más de 10 delante). Si lo rechaza, no responde o tarda demasiado, se prueba con otros usuarios que tengan el mismo
     archivo (mismo nombre y tamaño) o el mismo tema con la misma calidad y duración, hasta 3. Borrar la descarga corta

@@ -83,7 +83,7 @@ export class Kemix {
 			opts.converter ?? ffmpeg,
 			(trackId) => this.features.trackDownloaded(trackId)
 		)
-		this.soulseek = new SoulseekSearches(this.accounts, this.library, this.queue, this.settings, this.events)
+		this.soulseek = new SoulseekSearches(this.accounts, this.queue, this.settings, this.events)
 	}
 
 	start() {

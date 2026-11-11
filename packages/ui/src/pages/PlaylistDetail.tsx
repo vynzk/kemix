@@ -1,8 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { AudioQuality, DownloadService, PlaylistTrackRow, ScanState } from '@kemix/core'
 import { api } from '../lib/api'
-import { useDownloadProviders, useDownloadQualities } from '../lib/hooks'
 import {
 	LOSSY_TAG,
 	SERVICE_LABEL,
@@ -13,14 +12,9 @@ import {
 	cx,
 	duration,
 	expectedQuality,
-	findPreset,
-	fitPreset,
-	groupPresets,
 	isAnalyzed,
 	isLossy,
 	outputQuality,
-	presetKey,
-	presetOptions,
 	qualityDetail,
 	qualityLabel,
 	qualityTier,
@@ -41,6 +35,7 @@ import {
 } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 import { Bpm, GetSongBpmCredit, Key } from '../components/Features'
+import { DownloadPicker, useDownloadChoice } from '../components/DownloadPicker'
 
 export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 	const qc = useQueryClient()
@@ -52,19 +47,10 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 		qc.invalidateQueries({ queryKey: ['review'] })
 	}
 	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
-	const providers = useDownloadProviders()
-	const accountQualities = useDownloadQualities().data
 	const [selected, setSelected] = useState<Set<number>>(new Set())
-	/** '' = automatic, following the priority set in Ajustes. */
-	const [provider, setProvider] = useState<DownloadService | ''>('')
-	/** null = not touched: the quality and format set in Ajustes. */
-	const [presetPick, setPresetPick] = useState<DownloadPreset | null>(null)
+	const choice = useDownloadChoice()
+	const { provider, providers, preset, presetFor, accountQualities } = choice
 	const settings = state.data?.settings
-	const wanted = presetPick ?? findPreset(settings?.downloadQuality ?? 'max', settings?.outputFormat ?? 'original')
-	/** With a provider picked, only what it (and the account on it) can give; the choice is kept for "Automático". */
-	const presetFor = (s: DownloadService) => fitPreset(s, wanted, accountQualities?.[s])
-	const preset = provider ? presetFor(provider) : wanted
-	const options = presetOptions(provider || undefined, provider ? accountQualities?.[provider] : undefined)
 	const target = conversionTarget(preset.level, preset.format)
 	const download = useMutation({
 		mutationFn: (positions?: number[]) =>
@@ -175,40 +161,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 							<Button onClick={() => resync.mutate()} disabled={resync.isPending}>
 								{resync.isPending ? 'Actualizando…' : 'Volver a leer'}
 							</Button>
-							<Control label="Descargar desde">
-								<select
-									value={provider}
-									onChange={(e) => setProvider(e.target.value as DownloadService | '')}
-									className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
-									title="Servicio del que se bajan los temas. Automático: el primero que lo tenga, en el orden de Ajustes."
-								>
-									<option value="">Automático</option>
-									{providers.map((s) => (
-										<option key={s} value={s}>
-											{SERVICE_LABEL[s]}
-											{isLossy(s) ? ` (${LOSSY_TAG[s]})` : ''}
-										</option>
-									))}
-								</select>
-							</Control>
-							<Control label="Calidad y formato">
-								<select
-									value={presetKey(preset)}
-									onChange={(e) => setPresetPick(options.find((o) => presetKey(o) === e.target.value) ?? null)}
-									className="rounded-md border border-line bg-ink px-2 py-1.5 text-sm"
-									title={`${provider ? `Lo que da ${SERVICE_LABEL[provider]}${!isLossy(provider) && accountQualities?.[provider] ? ' con tu cuenta' : ''}. ` : ''}Calidad máxima a bajar y formato del archivo. Si un tema no llega a esa calidad, se baja en la mejor que tenga. AIFF, WAV y MP3 se convierten al terminar de bajar, con tags y carátula. No cambia los temas ya descargados.`}
-								>
-									{groupPresets(options).map(([group, list]) => (
-										<optgroup key={group} label={group}>
-											{list.map((o) => (
-												<option key={presetKey(o)} value={presetKey(o)}>
-													{o.label}
-												</option>
-											))}
-										</optgroup>
-									))}
-								</select>
-							</Control>
+							<DownloadPicker choice={choice} />
 							<Button
 								onClick={() => scan.mutate(selected.size > 0 ? [...selected] : undefined)}
 								disabled={scanning}
@@ -511,14 +464,6 @@ function FeaturesSummary({ scan, tracks }: { scan: ScanState; tracks: PlaylistTr
 }
 
 /** A caption over a header control, so it's clear what each selector is for. */
-function Control({ label, children }: { label: string; children: ReactNode }) {
-	return (
-		<label className="flex flex-col gap-1">
-			<span className="text-[11px] font-medium tracking-wide text-muted uppercase">{label}</span>
-			{children}
-		</label>
-	)
-}
 
 type ScanGroup = 'below' | QualityTier | 'pending' | 'notfound' | 'unknown' | 'done'
 

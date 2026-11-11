@@ -131,9 +131,15 @@ export const api = {
 	startSoulseekSearch: (query: string) => request<SlskSearch>('POST', '/api/soulseek/searches', { query }),
 	soulseekSearch: (id: string) => request<SlskSearch>('GET', `/api/soulseek/searches/${encodeURIComponent(id)}`),
 	stopSoulseekSearch: (id: string) => request('POST', `/api/soulseek/searches/${encodeURIComponent(id)}/stop`),
-	/** Baja un resultado a la playlist "Soulseek". */
-	soulseekDownload: (searchId: string, username: string, path: string) =>
-		request<{ playlistId: number }>('POST', '/api/soulseek/download', { searchId, username, path }),
+	/** Baja un resultado a la playlist "Soulseek", en la calidad y el formato elegidos (sin ellos, los de Ajustes). */
+	soulseekDownload: (searchId: string, username: string, path: string, opts: Omit<DownloadOptions, 'positions'> = {}) =>
+		request<{ playlistId: number }>('POST', '/api/soulseek/download', { searchId, username, path, ...opts }),
+	/**
+	 * Baja temas de una búsqueda en `service`: van a la playlist «Temas sueltos» y se bajan como cualquier playlist
+	 * (proveedor, calidad y formato opcionales).
+	 */
+	downloadFromSearch: (service: SourceService, tracks: SourceTrack[], opts: Omit<DownloadOptions, 'positions'> = {}) =>
+		request<{ playlistId: number }>('POST', '/api/search/download', { service, tracks, ...opts }),
 
 	createFolder: (name: string, parentId: number | null) => request<Folder>('POST', '/api/folders', { name, parentId }),
 	updateFolder: (id: number, patch: { name?: string; parentId?: number | null }) =>

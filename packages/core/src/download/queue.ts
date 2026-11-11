@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises'
 import { tx, type Db } from '../db'
 import type { EventBus } from '../events'
 import type { Accounts } from '../accounts'
-import type { Library } from '../library'
+import type { Library, LocalPlaylist, LocalTrack } from '../library'
 import type { SettingsStore } from '../settings'
 import type {
 	AccountService,
@@ -152,6 +152,27 @@ export class DownloadQueue {
 		this.events.emit({ type: 'library' })
 		this.events.emit({ type: 'review' })
 		this.#pump()
+	}
+
+	/**
+	 * Baja temas sueltos (de Buscar, de la pestaña de Soulseek o de Explorar): los agrega a una playlist de Kemix y los
+	 * pone en la cola como a cualquier playlist, con el mismo matching, Revisión, proveedor, calidad y formato.
+	 */
+	async enqueueLoose(
+		list: LocalPlaylist,
+		tracks: LocalTrack[],
+		provider?: DownloadService | null,
+		level?: QualityLevel | null,
+		format?: OutputFormat | null
+	): Promise<{ playlistId: number }> {
+		if (!tracks.length) throw new Error('No hay temas que bajar')
+		// Antes de agregarlos: si el proveedor no está conectado, que no queden en la playlist sin bajar.
+		if (provider && !isLossyService(provider) && !this.accounts.isConnected(provider)) {
+			throw new Error(`${DOWNLOAD_SERVICE_LABEL[provider]} no está conectado`)
+		}
+		const { playlistId, positions } = this.library.addToLocalPlaylist(list, tracks)
+		await this.enqueuePlaylist(playlistId, positions, provider, level, format)
+		return { playlistId }
 	}
 
 	retryFailed() {

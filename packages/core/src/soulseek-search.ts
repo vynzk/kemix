@@ -3,7 +3,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Accounts } from './accounts'
 import type { EventBus } from './events'
-import type { Library } from './library'
 import type { DownloadQueue } from './download/queue'
 import type { SettingsStore } from './settings'
 import type { OutputFormat, QualityLevel, SlskFile, SlskSearch } from './types'
@@ -29,7 +28,6 @@ export class SoulseekSearches {
 
 	constructor(
 		private accounts: Accounts,
-		private library: Library,
 		private queue: DownloadQueue,
 		private settings: SettingsStore,
 		private events: EventBus
@@ -110,19 +108,16 @@ export class SoulseekSearches {
 	): Promise<{ playlistId: number }> {
 		const file = this.#searches.get(searchId)?.state.results.find((f) => f.username === username && f.path === path)
 		if (!file) throw new Error('Ese resultado ya no está: busca de nuevo')
-		const { playlistId, positions } = this.library.addToLocalPlaylist('soulseek', [
-			{
-				source: 'soulseek',
-				sourceId: file.url,
-				url: file.url,
-				title: file.title,
-				artists: file.artists,
-				album: file.album,
-				durationMs: file.durationMs
-			}
-		])
-		await this.queue.enqueuePlaylist(playlistId, positions, 'soulseek', level, format)
-		return { playlistId }
+		const track = {
+			source: 'soulseek' as const,
+			sourceId: file.url,
+			url: file.url,
+			title: file.title,
+			artists: file.artists,
+			album: file.album,
+			durationMs: file.durationMs
+		}
+		return this.queue.enqueueLoose('soulseek', [track], 'soulseek', level, format)
 	}
 
 	/** Olvida las búsquedas viejas, y las que sobran (las más antiguas primero). */

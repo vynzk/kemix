@@ -644,3 +644,39 @@ describe('library + download queue', () => {
 		expect(kemix.secrets.get<{ arl: string }>('deezer')!.arl).toBe('super-secret-arl')
 	})
 })
+
+describe('temas sueltos (playlists de Kemix)', () => {
+	const fromSpotify = (t: SourceTrack) => ({ ...t, source: 'spotify' as const })
+
+	it('baja temas de una búsqueda a «Temas sueltos», como cualquier playlist', async () => {
+		const [one, two] = sourceTracks
+		const { playlistId } = await kemix.queue.enqueueLoose('buscar', [fromSpotify(one!), fromSpotify(two!)], null, 'mp3_320')
+		await settle(kemix)
+		const detail = await kemix.library.getPlaylist(playlistId)
+		expect(detail).toMatchObject({ source: 'local', sourceId: 'buscar', name: 'Temas sueltos' })
+		expect(detail.tracks.map((t) => t.download?.status)).toEqual(['done', 'done'])
+		expect(downloader.levels).toEqual(['mp3_320', 'mp3_320'])
+		expect(fs.readdirSync(path.join(dir, 'music', 'Temas sueltos'))).toContain('01 - Alpha - One.mp3')
+	})
+
+	it('no repite temas, reutiliza el de otra playlist y la sincronización no la toca', async () => {
+		await kemix.library.syncAll()
+		const [synced] = kemix.library.listPlaylists()
+		const syncedTrack = (await kemix.library.getPlaylist(synced!.id)).tracks[0]!
+		const once = kemix.library.addToLocalPlaylist('buscar', [fromSpotify(sourceTracks[0]!)])
+		const twice = kemix.library.addToLocalPlaylist('buscar', [fromSpotify(sourceTracks[0]!), fromSpotify(sourceTracks[1]!)])
+		expect(twice.positions).toEqual([once.positions[0], 1])
+		const local = await kemix.library.getPlaylist(once.playlistId)
+		expect(local.tracks[0]!.trackId).toBe(syncedTrack.trackId)
+		await kemix.library.syncAll()
+		await kemix.library.syncPlaylistTracks(once.playlistId, true)
+		expect(kemix.library.listPlaylists().find((p) => p.id === once.playlistId)).toMatchObject({ removed: false, trackCount: 2 })
+	})
+
+	it('si el proveedor elegido no está conectado, no agrega nada', async () => {
+		await expect(kemix.queue.enqueueLoose('buscar', [fromSpotify(sourceTracks[0]!)], 'deezer')).rejects.toThrow(
+			'Deezer no está conectado'
+		)
+		expect(kemix.library.listPlaylists()).toEqual([])
+	})
+})

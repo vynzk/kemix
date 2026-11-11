@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import type {
 	DownloadService,
+	FreeDownload,
 	Kemix,
 	MatchCandidate,
 	Settings,
@@ -59,6 +60,31 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		const s = (params as { service: string }).service as SourceService
 		if (!SOURCE_SERVICES.includes(s)) throw Object.assign(new Error('Servicio desconocido'), { statusCode: 404 })
 		return s
+	}
+	/** Temas que manda la UI (resultados de una búsqueda): solo los campos conocidos, con sus tipos. */
+	const sourceTracks = (tracks: unknown): SourceTrack[] => {
+		const valid = (t: unknown): t is SourceTrack => {
+			const x = t as Partial<SourceTrack> | null
+			return !!x && typeof x.sourceId === 'string' && typeof x.title === 'string' && Array.isArray(x.artists)
+		}
+		if (!Array.isArray(tracks) || !tracks.every(valid)) throw Object.assign(new Error('Temas inválidos'), { statusCode: 400 })
+		const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+		const fd = (v: unknown): FreeDownload | undefined => {
+			const x = v as Partial<FreeDownload> | null | undefined
+			const ok = (x?.kind === 'soundcloud' || x?.kind === 'link') && typeof x.url === 'string' && /^https?:\/\//.test(x.url)
+			return ok ? { kind: x.kind!, url: x.url! } : undefined
+		}
+		return tracks.map((t) => ({
+			sourceId: t.sourceId,
+			title: t.title,
+			artists: t.artists.filter((a): a is string => typeof a === 'string'),
+			album: str(t.album),
+			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined,
+			isrc: str(t.isrc),
+			coverUrl: str(t.coverUrl),
+			url: str(t.url),
+			freeDownload: fd(t.freeDownload)
+		}))
 	}
 
 	// ---------- state / settings ----------
@@ -200,7 +226,8 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		if (typeof body?.searchId !== 'string' || typeof body.username !== 'string' || typeof body.path !== 'string') {
 			throw Object.assign(new Error('Falta qué archivo bajar'), { statusCode: 400 })
 		}
-		return kemix.soulseek.download(body.searchId, body.username, body.path)
+		const o = downloadOptions(req.body)
+		return kemix.soulseek.download(body.searchId, body.username, body.path, o.level, o.format)
 	})
 
 	app.post('/api/playlists/create/:service', async (req) => {
@@ -215,23 +242,19 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 	/** A new playlist on `:service` with tracks found on another one: each is looked up there by search. */
 	app.post('/api/playlists/copy/:service', async (req) => {
 		const body = req.body as { name?: unknown; tracks?: unknown } | undefined
-		const tracks = body?.tracks
-		const valid = (t: unknown): t is SourceTrack => {
-			const x = t as Partial<SourceTrack> | null
-			return !!x && typeof x.sourceId === 'string' && typeof x.title === 'string' && Array.isArray(x.artists)
-		}
-		if (typeof body?.name !== 'string' || !Array.isArray(tracks) || !tracks.every(valid)) {
-			throw Object.assign(new Error('Datos de playlist inválidos'), { statusCode: 400 })
-		}
-		const clean = tracks.map((t) => ({
-			sourceId: t.sourceId,
-			title: t.title,
-			artists: t.artists.filter((a): a is string => typeof a === 'string'),
-			album: typeof t.album === 'string' ? t.album : undefined,
-			durationMs: typeof t.durationMs === 'number' ? t.durationMs : undefined,
-			isrc: typeof t.isrc === 'string' ? t.isrc : undefined
-		}))
-		return kemix.library.copyPlaylist(service(req.params), body.name, clean)
+		if (typeof body?.name !== 'string') throw Object.assign(new Error('Datos de playlist inválidos'), { statusCode: 400 })
+		return kemix.library.copyPlaylist(service(req.params), body.name, sourceTracks(body.tracks))
+	})
+	/**
+	 * Baja temas de una búsqueda: van a la playlist «Temas sueltos» y se bajan como cualquier playlist (proveedor,
+	 * calidad y formato opcionales).
+	 */
+	app.post('/api/search/download', async (req) => {
+		const body = req.body as { service?: unknown; tracks?: unknown } | undefined
+		const from = service({ service: body?.service })
+		const o = downloadOptions(req.body)
+		const tracks = sourceTracks(body?.tracks).map((t) => ({ ...t, source: from }))
+		return kemix.queue.enqueueLoose('buscar', tracks, o.provider, o.level, o.format)
 	})
 	app.get('/api/playlists/:id', async (req) => {
 		const playlistId = id(req.params)

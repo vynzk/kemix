@@ -3,7 +3,8 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import type { SlskFile } from '@kemix/core'
 import { api } from '../lib/api'
 import { bytes, cx, duration, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Empty, ErrorText, Input, PageHeader } from '../components/ui'
+import { Button, ErrorText, Input } from './ui'
+import { DownloadPicker, useDownloadChoice } from './DownloadPicker'
 
 /** Los archivos de una misma carpeta de un mismo usuario (casi siempre, un álbum). */
 interface FolderGroup {
@@ -43,9 +44,9 @@ function speedLabel(bytesPerSecond: number): string {
 	return `${Math.round(bytesPerSecond / 1024)} KB/s`
 }
 
-export function SoulseekPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist: (id: number) => void; onGoToAccounts: () => void }) {
-	const state = useQuery({ queryKey: ['state'], queryFn: api.state })
-	const connected = state.data?.accounts.some((a) => a.service === 'soulseek' && a.status === 'connected')
+/** La pestaña Soulseek de Buscar: búsqueda libre en la red, con los resultados llegando en vivo. */
+export function SoulseekSearch({ onOpenPlaylist }: { onOpenPlaylist: (id: number) => void }) {
+	const choice = useDownloadChoice('soulseek')
 	// La última búsqueda sigue ahí al volver de otra pantalla (el servidor la guarda un rato).
 	const [text, setText] = useState(() => sessionStorage.getItem(LAST_QUERY) ?? '')
 	const [searchId, setSearchId] = useState<string | null>(() => sessionStorage.getItem(LAST_SEARCH))
@@ -72,7 +73,8 @@ export function SoulseekPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylis
 	})
 	const stop = useMutation({ mutationFn: (id: string) => api.stopSoulseekSearch(id) })
 	const download = useMutation({
-		mutationFn: (f: SlskFile) => api.soulseekDownload(searchId!, f.username, f.path),
+		mutationFn: (f: SlskFile) =>
+			api.soulseekDownload(searchId!, f.username, f.path, { quality: choice.preset.level, format: choice.preset.format }),
 		onSuccess: (res, f) => {
 			setQueued((q) => new Set(q).add(f.url))
 			setPlaylistId(res.playlistId)
@@ -86,28 +88,14 @@ export function SoulseekPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylis
 	)
 	const folders = useMemo(() => groupByFolder(shown), [shown])
 
-	if (state.data && !connected) {
-		return (
-			<div>
-				<PageHeader title="Soulseek" />
-				<Empty title="Soulseek no está conectado">
-					Conecta tu cuenta de Soulseek (o crea una nueva) para buscar archivos que comparten otros usuarios.
-					<div className="mt-4">
-						<Button onClick={onGoToAccounts}>Ir a Cuentas</Button>
-					</div>
-				</Empty>
-			</div>
-		)
-	}
-
 	const running = !!search.data?.running
 	return (
 		<div>
-			<PageHeader title="Soulseek">
-				Busca en la red Soulseek archivos que comparten otros usuarios y baja los que quieras. Van a la playlist
-				«Soulseek» de tu biblioteca, con la calidad y el formato de Ajustes; el progreso se ve en Descargas.
-			</PageHeader>
-			<div className="space-y-4 p-8">
+			<div className="space-y-4">
+				<p className="text-sm text-muted">
+					Busca en la red Soulseek archivos que comparten otros usuarios. Los que bajas van a la playlist «Soulseek» de
+					tu biblioteca; el progreso se ve en Descargas.
+				</p>
 				<form
 					className="flex gap-2"
 					onSubmit={(e) => {
@@ -125,6 +113,9 @@ export function SoulseekPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylis
 						</Button>
 					)}
 				</form>
+				<div className="flex flex-wrap items-end gap-2">
+					<DownloadPicker choice={choice} />
+				</div>
 				<ErrorText error={start.error ?? search.error ?? download.error} />
 				{search.data?.error && <p className="text-sm text-red-300">{search.data.error}</p>}
 				{search.data && (
