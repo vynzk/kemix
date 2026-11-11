@@ -1,5 +1,5 @@
 import type { Downloader } from '../download/lucida-adapter'
-import type { DownloadService, MatchCandidate, MatchStatus, PlaylistSource, SourceTrack, TargetService } from '../types'
+import type { DownloadService, MatchCandidate, MatchStatus, SourceTrack, TargetService, TrackSource } from '../types'
 import { DOWNLOAD_SERVICE_LABEL, isLossyService, isTargetService } from '../types'
 import { errorMessage } from '../util'
 import { scoreMatch, scoreSoulseek, scoreYouTube, searchQueries } from './score'
@@ -72,7 +72,7 @@ export async function searchService(
  * Otherwise the candidates are left for manual review.
  */
 export async function resolveTrack(
-	track: SourceTrack & { source: PlaylistSource },
+	track: SourceTrack & { source: TrackSource },
 	downloaders: Downloader[],
 	threshold: number,
 	opts: ResolveOptions = {}

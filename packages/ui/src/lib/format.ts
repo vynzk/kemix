@@ -9,7 +9,9 @@ import type {
 	QualityLevel
 } from '@kemix/core'
 
-export const SERVICE_LABEL: Record<AccountService | DownloadService, string> = {
+/** `local`: las playlists de Kemix (Temas sueltos, Soulseek, SoundCloud gratis). */
+export const SERVICE_LABEL: Record<AccountService | DownloadService | 'local', string> = {
+	local: 'Kemix',
 	spotify: 'Spotify',
 	ytmusic: 'YouTube Music',
 	qobuz: 'Qobuz',
@@ -36,7 +38,14 @@ function oneFile(service: DownloadService): boolean {
 /** What a lossy service gives, to warn before downloading from it. */
 export const LOSSY_NOTE: Record<'youtube' | 'soundcloud', string> = {
 	youtube: 'No es calidad máxima: AAC ~128 kbps (256 con YouTube Music Premium), con pérdida.',
-	soundcloud: 'No es calidad máxima: hasta AAC 160 kbps, con pérdida (o el archivo original, si el artista lo permite).'
+	soundcloud:
+		'Hasta AAC 160 kbps, con pérdida, salvo los temas con descarga gratis: esos bajan el archivo que subió el artista, cuya calidad se sabe al bajarlo.'
+}
+
+/** Junto al nombre de un servicio con pérdida, al elegirlo. SoundCloud tiene temas que se bajan gratis en su original. */
+export const LOSSY_TAG: Record<'youtube' | 'soundcloud', string> = {
+	youtube: 'con pérdida',
+	soundcloud: 'con pérdida salvo descargas gratis'
 }
 
 const CODEC_LABEL: Record<AudioQuality['codec'], string> = {
@@ -286,7 +295,8 @@ export function qualityTone(q: AudioQuality | null | undefined): string {
 	return 'text-emerald-300'
 }
 
-export const SERVICE_COLOR: Record<AccountService, string> = {
+export const SERVICE_COLOR: Record<AccountService | 'local', string> = {
+	local: '#c6f432',
 	spotify: '#1ed760',
 	ytmusic: '#ff3b30',
 	qobuz: '#4b8bf5',

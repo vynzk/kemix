@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import {
 	DOWNLOAD_PRESETS,
 	KEY_NOTATION_LABEL,
+	LOSSY_TAG,
 	SERVICE_LABEL,
 	findPreset,
 	groupPresets,
@@ -58,14 +59,14 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. Soundeo solo baja con Premium, y cada tema nuevo gasta una de las descargas del día de tu plan: ponlo debajo de Qobuz y Deezer para usarlo solo con lo que no esté ahí. Soulseek baja archivos de otros usuarios: es más lento (a veces hay que esperar en su cola) y cada archivo tiene su calidad, así que conviene dejarlo después de los servicios de pago. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
+					hint="En modo automático se busca primero en el de arriba. Soundeo solo baja con Premium, y cada tema nuevo gasta una de las descargas del día de tu plan: ponlo debajo de Qobuz y Deezer para usarlo solo con lo que no esté ahí. Soulseek baja archivos de otros usuarios: es más lento (a veces hay que esperar en su cola) y cada archivo tiene su calidad, así que conviene dejarlo después de los servicios de pago. YouTube (AAC ~128 kbps) es con pérdida, y SoundCloud también (hasta AAC 160 kbps) salvo en los temas con descarga gratis, que bajan el archivo que subió el artista: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
 							<li key={s} className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm">
 								<span className="flex-1">
 									{i + 1}. {SERVICE_LABEL[s]}
-									{isLossy(s) && <span className="ml-1 text-xs text-amber-300/80">con pérdida</span>}
+									{isLossy(s) && <span className="ml-1 text-xs text-amber-300/80">{LOSSY_TAG[s]}</span>}
 								</span>
 								<Button type="button" variant="ghost" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Subir">
 									↑

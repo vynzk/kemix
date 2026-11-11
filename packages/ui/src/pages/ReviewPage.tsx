@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadService, MatchCandidate, ReviewItem } from '@kemix/core'
 import { api } from '../lib/api'
 import { useDownloadProviders, useFeatureLookup, useGetSongBpm, useKeyNotation } from '../lib/hooks'
-import { LOSSY_NOTE, SERVICE_LABEL, cx, duration, isLossy, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Cover, Empty, ErrorText, Input, PageHeader, Select, ServiceDot } from '../components/ui'
+import { LOSSY_NOTE, LOSSY_TAG, SERVICE_LABEL, cx, duration, isLossy, qualityLabel, qualityTone } from '../lib/format'
+import { Button, Cover, Empty, ErrorText, FreeDownloadLink, Input, PageHeader, Select, ServiceDot } from '../components/ui'
 import { PlayButton, candidateKey, usePlayer } from '../components/Player'
 import { FeaturesInline, GetSongBpmCredit, LookedUpFeatures } from '../components/Features'
 
@@ -67,7 +67,7 @@ function providerOption(s: DownloadService, prefix = '') {
 		<option key={s} value={s}>
 			{prefix}
 			{SERVICE_LABEL[s]}
-			{isLossy(s) ? ' (con pérdida)' : ''}
+			{isLossy(s) ? ` (${LOSSY_TAG[s]})` : ''}
 		</option>
 	)
 }
@@ -217,6 +217,8 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 						{candidates.map((c) => {
 							const key = candidateKey(c)
 							const service = downloadService(c)
+							// Con la descarga de SoundCloud se baja el archivo del artista: no hace falta el aviso de pérdida.
+							const warn = isLossy(service) && !(service === c.service && c.freeDownload?.kind === 'soundcloud')
 							return (
 								<CandidateRow
 									key={key}
@@ -244,8 +246,8 @@ function ReviewRow({ item, providers }: { item: ReviewItem; providers: DownloadS
 										</>
 									) : (
 										<Button
-											variant={isLossy(service) ? 'default' : 'primary'}
-											onClick={() => (isLossy(service) ? setConfirming(key) : accept.mutate(c))}
+											variant={warn ? 'default' : 'primary'}
+											onClick={() => (warn ? setConfirming(key) : accept.mutate(c))}
 											disabled={busy}
 											title={
 												service === c.service
@@ -305,10 +307,14 @@ function CandidateRow({
 				<p className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-muted">
 					<span>{SERVICE_LABEL[c.service]}</span>
 					<span>· {duration(c.durationMs)}</span>
-					{c.maxQuality && (
-						<span className={qualityTone(c.maxQuality)} title="Máxima calidad disponible">
-							· {qualityLabel(c.maxQuality)}
-						</span>
+					{c.freeDownload ? (
+						<FreeDownloadLink fd={c.freeDownload} />
+					) : (
+						c.maxQuality && (
+							<span className={qualityTone(c.maxQuality)} title="Máxima calidad disponible">
+								· {qualityLabel(c.maxQuality)}
+							</span>
+						)
 					)}
 				</p>
 				<div className="mt-1">{features}</div>

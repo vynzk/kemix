@@ -4,6 +4,7 @@ import type { AudioQuality, DownloadService, PlaylistTrackRow, ScanState } from 
 import { api } from '../lib/api'
 import { useDownloadProviders, useDownloadQualities } from '../lib/hooks'
 import {
+	LOSSY_TAG,
 	SERVICE_LABEL,
 	TARGET_LABEL,
 	belowTarget,
@@ -28,7 +29,16 @@ import {
 	type DownloadPreset,
 	type QualityTier
 } from '../lib/format'
-import { Button, Cover, ErrorText, MatchLabel, RemoveDownloadButton, ServiceDot, StatusPill } from '../components/ui'
+import {
+	Button,
+	Cover,
+	ErrorText,
+	FreeDownloadLink,
+	MatchLabel,
+	RemoveDownloadButton,
+	ServiceDot,
+	StatusPill
+} from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 import { Bpm, GetSongBpmCredit, Key } from '../components/Features'
 
@@ -176,7 +186,7 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 									{providers.map((s) => (
 										<option key={s} value={s}>
 											{SERVICE_LABEL[s]}
-											{isLossy(s) ? ' (con pérdida)' : ''}
+											{isLossy(s) ? ` (${LOSSY_TAG[s]})` : ''}
 										</option>
 									))}
 								</select>
@@ -418,6 +428,8 @@ function QualityCell(props: {
 			</span>
 		)
 	}
+	// SoundCloud con descarga gratis: la calidad no se sabe hasta bajarlo.
+	if (track.match?.freeDownload) return <FreeDownloadLink fd={track.match.freeDownload} />
 	const max = track.match?.maxQuality
 	if (!max) return <span className="text-xs text-zinc-600">–</span>
 	const capped = expected && qualityLabel(expected) !== qualityLabel(max) ? expected : null
@@ -619,8 +631,11 @@ function RetryWithProvider(props: {
 				con error u omitidos). Puedes intentarlo con otro proveedor:
 				{props.providers.some(isLossy) && (
 					<span className="ml-1 text-xs text-amber-300/80">
-						{props.providers.filter(isLossy).map((s) => SERVICE_LABEL[s]).join(' y ')}{' '}
-						{props.providers.filter(isLossy).length > 1 ? 'no son' : 'no es'} calidad máxima (con pérdida).
+						{props.providers
+							.filter(isLossy)
+							.map((s) => `${SERVICE_LABEL[s]}: ${LOSSY_TAG[s]}`)
+							.join(' · ')}
+						.
 					</span>
 				)}
 			</p>

@@ -18,10 +18,12 @@ export type LossyService = 'youtube' | 'soundcloud'
 /** Everything a track can be downloaded from. */
 export type DownloadService = TargetService | LossyService
 /**
- * Where a library playlist comes from: a source service, or Kemix itself. "Soulseek" is a local playlist that collects
- * the files downloaded from Soulseek's own search page.
+ * De dónde viene una playlist de la biblioteca: de un servicio, o de Kemix mismo (`local`): las que juntan lo que se
+ * baja desde Buscar, desde la pestaña de Soulseek o desde Explorar.
  */
-export type PlaylistSource = SourceService | 'soulseek'
+export type PlaylistSource = SourceService | 'local'
+/** De dónde viene un tema de la biblioteca: de un servicio, o un archivo de Soulseek. */
+export type TrackSource = SourceService | 'soulseek'
 
 export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer', 'soundcloud']
 export const ACCOUNT_SERVICES: AccountService[] = [...SOURCE_SERVICES, 'soundeo', 'soulseek']
@@ -76,6 +78,18 @@ export interface SourceTrack {
 	isrc?: string
 	coverUrl?: string
 	url?: string
+	/** SoundCloud: el tema se puede bajar gratis. */
+	freeDownload?: FreeDownload
+}
+
+/**
+ * Un tema de SoundCloud que se baja gratis: con la descarga de SoundCloud (`soundcloud`: el archivo que subió el
+ * artista, que Kemix también baja) o con un enlace que dejó el artista (`link`: Hypeddit, Dropbox…; puede pedir
+ * seguirlo o un email, así que solo se abre en el navegador). Su calidad no se sabe hasta bajarlo.
+ */
+export interface FreeDownload {
+	kind: 'soundcloud' | 'link'
+	url: string
 }
 
 /**
@@ -150,6 +164,8 @@ export interface TargetTrack {
 	copyright?: string
 	/** Best quality the service can deliver for this track (before downloading). */
 	maxQuality?: AudioQuality
+	/** SoundCloud: se puede bajar gratis (entonces no hay `maxQuality`: no se sabe hasta bajarlo). */
+	freeDownload?: FreeDownload
 }
 
 export interface MatchCandidate extends TargetTrack {
@@ -330,6 +346,8 @@ export interface PlaylistTrackRow {
 		targetUrl: string | null
 		confidence: number | null
 		maxQuality: AudioQuality | null
+		/** SoundCloud: el tema elegido se puede bajar gratis. */
+		freeDownload: FreeDownload | null
 	} | null
 	download: {
 		/** The download's id, as in `DownloadRow`. */
@@ -355,7 +373,7 @@ export interface ReviewItem {
 	artists: string[]
 	album: string | null
 	durationMs: number | null
-	source: PlaylistSource
+	source: TrackSource
 	playlists: string[]
 	candidates: MatchCandidate[]
 	/** Not found on any lossless service: YouTube/SoundCloud are the remaining options. */

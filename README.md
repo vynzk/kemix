@@ -120,6 +120,17 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   independientes que no están en Qobuz ni Deezer. Sin cuenta, los temas de SoundCloud Go+ solo ofrecen 30 s y se
   descartan en la búsqueda. En Revisión, el ▶ de una opción de SoundCloud la reproduce con el reproductor de
   SoundCloud integrado.
+- **Descargas gratis de SoundCloud**: un tema que se baja gratis lleva el botón **⬇ Descarga gratis ↗** (en Buscar,
+  Explorar, Revisión y las playlists), que abre la descarga en el navegador, y en vez de su calidad dice solo eso:
+  la calidad se sabe al bajarlo. Hay dos tipos:
+  - La descarga de SoundCloud: el artista deja bajar el archivo que subió (a veces WAV o FLAC). Kemix también lo
+    baja por su cuenta.
+  - Un enlace que dejó el artista en el botón de compra («Free Download») o en la descripción (Hypeddit, ToneDen,
+    Dropbox, Drive…). Suelen pedir seguirlo, un like o un email, así que Kemix no baja desde ahí: solo abre el
+    enlace.
+
+  Por eso SoundCloud ya no figura como «con pérdida» a secas, sino «con pérdida salvo descargas gratis». yt-dlp no
+  trae el botón de compra: Kemix lo consulta en la API pública de SoundCloud (sin cuenta) para cada búsqueda.
 - **Cuenta de SoundCloud (opcional)**: se conecta iniciando sesión en una ventana (app de escritorio) o con las
   cookies de soundcloud.com; Kemix guarda solo la cookie `oauth_token`, cifrada. Con ella importa tus playlists, las
   que te gustaron y tus Me gusta (vía `api-v2.soundcloud.com`, con el client id público del reproductor web, igual

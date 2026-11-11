@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { SourceService, SourceTrack } from '@kemix/core'
 import { api } from '../lib/api'
 import { SERVICE_COLOR, SERVICE_LABEL, cx, duration } from '../lib/format'
-import { Button, Cover, Empty, ErrorText, Input, PageHeader } from '../components/ui'
+import { Button, Cover, Empty, ErrorText, FreeDownloadLink, Input, PageHeader } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 import { GetSongBpmCredit, LookedUpFeatures } from '../components/Features'
 import { useFeatureLookup, useGetSongBpm, useKeyNotation } from '../lib/hooks'
@@ -161,6 +161,7 @@ export function SearchPage({ onOpenPlaylist, onGoToAccounts }: { onOpenPlaylist:
 												{t.artists.join(', ')}
 												{t.album && ` · ${t.album}`}
 											</p>
+											{t.freeDownload && <FreeDownloadLink fd={t.freeDownload} className="mt-0.5" />}
 										</div>
 										<LookedUpFeatures
 											service={service}

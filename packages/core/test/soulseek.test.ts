@@ -362,7 +362,9 @@ describe('Soulseek en Kemix', () => {
 		expect(row.error).toBeNull()
 		expect(row).toMatchObject({ status: 'done', service: 'soulseek', quality: { codec: 'wav', lossless: true } })
 		expect(row.path).toMatch(/Soulseek[\\/]01 - Daft Punk - One More Time\.wav$/)
-		expect(kemix.library.listPlaylists()).toMatchObject([{ id: playlistId, source: 'soulseek', name: 'Soulseek', trackCount: 1 }])
+		expect(kemix.library.listPlaylists()).toMatchObject([
+			{ id: playlistId, source: 'local', sourceId: 'soulseek', name: 'Soulseek', trackCount: 1 }
+		])
 
 		await kemix.soulseek.download(id, 'ana', WAV_PATH)
 		expect((await kemix.library.getPlaylist(playlistId)).tracks).toHaveLength(1)

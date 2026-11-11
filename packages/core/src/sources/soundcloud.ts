@@ -2,10 +2,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { AudioStream, Downloader } from '../download/lucida-adapter'
-import type { AudioQuality, SourceTrack, TargetTrack } from '../types'
+import type { AudioQuality, FreeDownload, SourceTrack, TargetTrack } from '../types'
 import { cleanArtist, searchQueries } from '../match/score'
 import { LOSSY_MIN_SCORE, searchService } from '../match/resolve'
 import { toNetscapeCookies } from './cookies'
+import { fetchTracksById, freeDownloadOf, freeLinkIn, type RawTrack } from './soundcloud-api'
 import { lastLine, type YtDlp } from './yt-dlp'
 
 /** The best SoundCloud streams to everyone: AAC 160 kbps (older tracks only have MP3 128 or Opus 64). Lossy. */
@@ -34,6 +35,7 @@ interface YtDlpTrack {
 	thumbnail?: string
 	thumbnails?: { id?: string; url?: string; width?: number }[]
 	formats?: YtDlpFormat[]
+	description?: string
 }
 
 interface YtDlpFormat {
@@ -87,6 +89,9 @@ export function parseSearchOutput(stdout: string): TargetTrack[] {
 		const best = t.formats?.length ? bestFormat(t.formats) : undefined
 		if (best === null) continue
 		const artists = t.artists?.length ? t.artists : t.artist ? [t.artist] : t.uploader ? [cleanArtist(t.uploader)] : []
+		// El formato `download` es la descarga de SoundCloud (el archivo que subió el artista).
+		const freeDownload: FreeDownload | null =
+			best?.format_id === 'download' ? { kind: 'soundcloud', url } : freeLinkIn(t.description)
 		out.push({
 			service: 'soundcloud',
 			id: String(t.id),
@@ -96,7 +101,9 @@ export function parseSearchOutput(stdout: string): TargetTrack[] {
 			album: t.album,
 			durationMs: t.duration ? Math.round(t.duration * 1000) : undefined,
 			coverUrl: coverOf(t),
-			maxQuality: best ? formatQuality(best) : SOUNDCLOUD_QUALITY
+			// Con descarga gratis no se sabe la calidad hasta bajarlo.
+			maxQuality: freeDownload ? undefined : best ? formatQuality(best) : SOUNDCLOUD_QUALITY,
+			freeDownload: freeDownload ?? undefined
 		})
 	}
 	return out
@@ -135,7 +142,8 @@ export function sourceUpload(track: SourceTrack & { source?: string }): TargetTr
 		album: track.album,
 		durationMs: track.durationMs,
 		coverUrl: track.coverUrl,
-		maxQuality: SOUNDCLOUD_QUALITY
+		maxQuality: track.freeDownload ? undefined : SOUNDCLOUD_QUALITY,
+		freeDownload: track.freeDownload
 	}
 }
 
@@ -149,8 +157,33 @@ export class SoundCloud {
 	constructor(
 		private ytDlp: YtDlp,
 		/** The connected account's `oauth_token`, if any. */
-		private token: () => string | null = () => null
+		private token: () => string | null = () => null,
+		/** Temas por id en la API pública (para ver su botón de compra, que yt-dlp no trae); los tests pasan uno falso. */
+		private lookup: (ids: string[]) => Promise<RawTrack[]> = fetchTracksById
 	) {}
+
+	/**
+	 * yt-dlp no trae el botón de compra, donde muchos artistas dejan su descarga gratis: se completa con la API
+	 * pública. Si falla, quedan como los dio yt-dlp.
+	 */
+	async #addFreeDownloads(tracks: TargetTrack[]) {
+		const missing = tracks.filter((t) => !t.freeDownload)
+		if (!missing.length) return
+		let raw: RawTrack[]
+		try {
+			raw = await this.lookup(missing.map((t) => t.id))
+		} catch {
+			return
+		}
+		const byId = new Map(raw.map((r) => [String(r.id), r]))
+		for (const t of missing) {
+			const r = byId.get(t.id)
+			const free = r && freeDownloadOf(r)
+			if (!free) continue
+			t.freeDownload = free
+			t.maxQuality = undefined
+		}
+	}
 
 	/** yt-dlp reads the session from an `oauth_token` cookie, and only from a file: a private one, removed after. */
 	async #session(): Promise<{ args: string[]; cleanup: () => void }> {
@@ -179,9 +212,10 @@ export class SoundCloud {
 				`scsearch${Math.max(1, Math.min(limit, 20))}:${query}`
 			])
 			.finally(session.cleanup)
-		const tracks = parseSearchOutput(res.stdout)
+		const tracks = parseSearchOutput(res.stdout).slice(0, limit)
 		if (!tracks.length && res.code !== 0) throw new Error(describeError(res.stderr))
-		return tracks.slice(0, limit)
+		await this.#addFreeDownloads(tracks)
+		return tracks
 	}
 
 	/** SoundCloud results for a track, best match first. */

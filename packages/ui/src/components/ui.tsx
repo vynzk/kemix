@@ -1,5 +1,5 @@
 import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
-import type { AccountService, DownloadStatus, MatchStatus } from '@kemix/core'
+import type { AccountService, DownloadStatus, FreeDownload, MatchStatus } from '@kemix/core'
 import { SERVICE_COLOR, SERVICE_LABEL, cx } from '../lib/format'
 
 export function Button({
@@ -55,7 +55,33 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 	)
 }
 
-export function ServiceDot({ service, withLabel }: { service: AccountService; withLabel?: boolean }) {
+/**
+ * Un tema de SoundCloud que se baja gratis: enlace a su descarga, que se abre en el navegador. No se muestra calidad:
+ * no se sabe hasta bajarlo.
+ */
+export function FreeDownloadLink({ fd, className }: { fd: FreeDownload; className?: string }) {
+	return (
+		<a
+			href={fd.url}
+			target="_blank"
+			rel="noreferrer"
+			onClick={(e) => e.stopPropagation()}
+			title={
+				fd.kind === 'soundcloud'
+					? 'SoundCloud deja bajar el archivo que subió el artista: ábrelo y usa «Descargar archivo». Kemix también lo baja. La calidad se sabe al bajarlo.'
+					: 'El artista dejó un enlace de descarga gratis (puede pedir seguirlo, un like o un email). Kemix no puede bajar desde ahí: ábrelo en el navegador.'
+			}
+			className={cx(
+				'inline-flex items-center gap-1 rounded bg-emerald-950 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-emerald-300 hover:bg-emerald-900',
+				className
+			)}
+		>
+			⬇ Descarga gratis ↗
+		</a>
+	)
+}
+
+export function ServiceDot({ service, withLabel }: { service: AccountService | 'local'; withLabel?: boolean }) {
 	return (
 		<span className="inline-flex items-center gap-1.5 text-xs text-muted">
 			<span className="h-2 w-2 shrink-0 rounded-full" style={{ background: SERVICE_COLOR[service] }} />

@@ -12,12 +12,13 @@ import type {
 	PlaylistSummary,
 	PlaylistTrackRow,
 	ReviewItem,
-	SlskFile,
 	SourcePlaylist,
 	SourceService,
 	SourceTrack,
 	AudioQuality,
-	DownloadService
+	DownloadService,
+	FreeDownload,
+	TrackSource
 } from './types'
 import { SOURCE_SERVICES } from './types'
 import { sourceVideo } from './sources/youtube'
@@ -34,8 +35,22 @@ const SERVICE_NAMES: Record<SourceService, string> = {
 	soundcloud: 'SoundCloud'
 }
 
-/** La playlist local donde van los archivos bajados desde la pantalla de búsqueda de Soulseek. */
-const SOULSEEK_PLAYLIST = { sourceId: 'downloads', name: 'Soulseek' }
+/**
+ * Las playlists de Kemix (`source = 'local'`): juntan lo que se baja fuera de una playlist de un servicio, desde
+ * Buscar, desde la pestaña de Soulseek o desde Explorar. Ningún servicio las sincroniza.
+ */
+export const LOCAL_PLAYLISTS = {
+	buscar: { sourceId: 'buscar', name: 'Temas sueltos' },
+	soulseek: { sourceId: 'soulseek', name: 'Soulseek' },
+	soundcloud: { sourceId: 'soundcloud-gratis', name: 'SoundCloud gratis' }
+} as const
+export type LocalPlaylist = keyof typeof LOCAL_PLAYLISTS
+
+/** Un tema para agregar a una playlist local, con el servicio (o Soulseek) del que viene. */
+export type LocalTrack = SourceTrack & { source: TrackSource }
+
+const toJson = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v))
+const fromJson = <T>(s: string | null): T | undefined => (s ? (JSON.parse(s) as T) : undefined)
 
 interface PlaylistRow {
 	id: number
@@ -235,8 +250,9 @@ export class Library {
 	/** Fetch a playlist's tracks if they changed since the last fetch (or always, with force). */
 	async syncPlaylistTracks(playlistId: number, force = false): Promise<void> {
 		const p = this.#playlist(playlistId)
-		// La de Soulseek es de Kemix: sus temas se agregan desde la búsqueda, no hay nada que leer.
-		if (p.source === 'soulseek') return
+		// Las de Kemix no vienen de ningún servicio: sus temas se agregan al bajarlos, no hay nada que leer.
+		if (p.source === 'local') return
+		const source = p.source
 		const hasTracks = !!this.db.prepare('SELECT 1 FROM playlist_tracks WHERE playlist_id = ? LIMIT 1').get(playlistId)
 		if (!force && hasTracks && p.snapshot && p.snapshot === p.tracks_snapshot) return
 		let tracks: SourceTrack[]
@@ -246,31 +262,9 @@ export class Library {
 			throw new Error(`No se pudieron leer los temas de "${p.name}": ${errorMessage(err)}`)
 		}
 		tx(this.db, () => {
-			const upsert = this.db.prepare(
-				`INSERT INTO tracks (source, source_id, title, artists, album, duration_ms, isrc, cover_url, url)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(source, source_id) DO UPDATE SET
-				   title = excluded.title, artists = excluded.artists, album = excluded.album,
-				   duration_ms = excluded.duration_ms, isrc = COALESCE(excluded.isrc, tracks.isrc),
-				   cover_url = excluded.cover_url, url = excluded.url
-				 RETURNING id`
-			)
 			this.db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(playlistId)
 			const link = this.db.prepare('INSERT INTO playlist_tracks (playlist_id, position, track_id) VALUES (?, ?, ?)')
-			tracks.forEach((t, i) => {
-				const { id } = upsert.get(
-					p.source,
-					t.sourceId,
-					t.title,
-					JSON.stringify(t.artists),
-					t.album ?? null,
-					t.durationMs ?? null,
-					t.isrc ?? null,
-					t.coverUrl ?? null,
-					t.url ?? null
-				) as { id: number }
-				link.run(playlistId, i, id)
-			})
+			for (const [i, t] of tracks.entries()) link.run(playlistId, i, this.#upsertTrack({ ...t, source }))
 			this.db
 				.prepare('UPDATE playlists SET tracks_snapshot = snapshot, track_count = ? WHERE id = ?')
 				.run(tracks.length, playlistId)
@@ -419,7 +413,8 @@ export class Library {
 						targetService: r.target_service,
 						targetUrl: r.target_url,
 						confidence: r.confidence,
-						maxQuality: r.target_meta ? ((JSON.parse(r.target_meta) as MatchCandidate).maxQuality ?? null) : null
+						maxQuality: fromJson<MatchCandidate>(r.target_meta)?.maxQuality ?? null,
+						freeDownload: fromJson<MatchCandidate>(r.target_meta)?.freeDownload ?? null
 					}
 				: null,
 			download: r.d_status
@@ -518,7 +513,8 @@ export class Library {
 	listReview(): ReviewItem[] {
 		const rows = this.db
 			.prepare(
-				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, t.url, m.candidates, m.status,
+				`SELECT t.id, t.title, t.artists, t.album, t.duration_ms, t.source, t.source_id, t.cover_url, t.url, t.free_download,
+				   m.candidates, m.status,
 				   (SELECT json_group_array(DISTINCT p.name) FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
 				    WHERE pt.track_id = t.id) AS playlists,
 				   f.status AS f_status, f.bpm, f.bpm_source, f.key_tonic, f.key_minor, f.key_source, f.error AS f_error
@@ -534,10 +530,11 @@ export class Library {
 			artists: string
 			album: string | null
 			duration_ms: number | null
-			source: PlaylistSource
+			source: TrackSource
 			source_id: string
 			cover_url: string | null
 			url: string | null
+			free_download: string | null
 			candidates: string | null
 			status: MatchStatus
 			playlists: string
@@ -558,7 +555,8 @@ export class Library {
 				album: r.album ?? undefined,
 				durationMs: r.duration_ms ?? undefined,
 				coverUrl: r.cover_url ?? undefined,
-				url: r.url ?? undefined
+				url: r.url ?? undefined,
+				freeDownload: fromJson<FreeDownload>(r.free_download)
 			}
 			const own = sourceVideo(track) ?? sourceUpload(track)
 			if (own) {
@@ -580,41 +578,70 @@ export class Library {
 	}
 
 	/**
-	 * Agrega un archivo de la búsqueda de Soulseek a la playlist local "Soulseek" (la crea la primera vez) y dice en
-	 * qué posición quedó. Un archivo que ya está en ella no se repite. El tema apunta al archivo (`url` slsk://), así
-	 * que al descargarlo se baja ese mismo, sin buscar.
+	 * Guarda un tema (o actualiza el que ya estaba, del mismo servicio y con el mismo id) y devuelve su id. Así un tema
+	 * que está en varias playlists es uno solo: comparte match, archivo y clave/BPM.
 	 */
-	addSoulseekFile(file: SlskFile): { playlistId: number; position: number } {
+	#upsertTrack(t: LocalTrack): number {
+		const { id } = this.db
+			.prepare(
+				`INSERT INTO tracks (source, source_id, title, artists, album, duration_ms, isrc, cover_url, url, free_download)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(source, source_id) DO UPDATE SET
+				   title = excluded.title, artists = excluded.artists, album = excluded.album,
+				   duration_ms = excluded.duration_ms, isrc = COALESCE(excluded.isrc, tracks.isrc),
+				   cover_url = excluded.cover_url, url = excluded.url, free_download = excluded.free_download
+				 RETURNING id`
+			)
+			.get(
+				t.source,
+				t.sourceId,
+				t.title,
+				JSON.stringify(t.artists),
+				t.album ?? null,
+				t.durationMs ?? null,
+				t.isrc ?? null,
+				t.coverUrl ?? null,
+				t.url ?? null,
+				toJson(t.freeDownload)
+			) as { id: number }
+		return id
+	}
+
+	/**
+	 * Agrega temas a una playlist de Kemix (la crea la primera vez) y dice en qué posiciones quedaron. Un tema que ya
+	 * está en ella no se repite. Cada tema conserva su servicio: uno de Spotify se busca para bajarlo como en cualquier
+	 * playlist, y uno de Soulseek o de SoundCloud apunta a ese mismo archivo.
+	 */
+	addToLocalPlaylist(list: LocalPlaylist, tracks: LocalTrack[]): { playlistId: number; positions: number[] } {
+		const { sourceId, name } = LOCAL_PLAYLISTS[list]
 		const added = tx(this.db, () => {
 			this.db
 				.prepare(
-					`INSERT INTO playlists (source, source_id, name, synced_at) VALUES ('soulseek', ?, ?, ?)
+					`INSERT INTO playlists (source, source_id, name, synced_at) VALUES ('local', ?, ?, ?)
 					 ON CONFLICT(source, source_id) DO NOTHING`
 				)
-				.run(SOULSEEK_PLAYLIST.sourceId, SOULSEEK_PLAYLIST.name, now())
+				.run(sourceId, name, now())
 			const { id: playlistId } = this.db
-				.prepare(`SELECT id FROM playlists WHERE source = 'soulseek' AND source_id = ?`)
-				.get(SOULSEEK_PLAYLIST.sourceId) as { id: number }
-			const { id: trackId } = this.db
-				.prepare(
-					`INSERT INTO tracks (source, source_id, title, artists, album, duration_ms, url) VALUES ('soulseek', ?, ?, ?, ?, ?, ?)
-					 ON CONFLICT(source, source_id) DO UPDATE SET title = excluded.title, artists = excluded.artists,
-					   album = excluded.album, duration_ms = excluded.duration_ms
-					 RETURNING id`
-				)
-				.get(file.url, file.title, JSON.stringify(file.artists), file.album ?? null, file.durationMs ?? null, file.url) as {
-				id: number
-			}
-			const existing = this.db
-				.prepare('SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?')
-				.get(playlistId, trackId) as { position: number } | undefined
-			if (existing) return { playlistId, position: existing.position }
-			const { next } = this.db
+				.prepare(`SELECT id FROM playlists WHERE source = 'local' AND source_id = ?`)
+				.get(sourceId) as { id: number }
+			const findPosition = this.db.prepare('SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?')
+			const link = this.db.prepare('INSERT INTO playlist_tracks (playlist_id, position, track_id) VALUES (?, ?, ?)')
+			let { next } = this.db
 				.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS next FROM playlist_tracks WHERE playlist_id = ?')
 				.get(playlistId) as { next: number }
-			this.db.prepare('INSERT INTO playlist_tracks (playlist_id, position, track_id) VALUES (?, ?, ?)').run(playlistId, next, trackId)
-			this.db.prepare('UPDATE playlists SET track_count = ? WHERE id = ?').run(next + 1, playlistId)
-			return { playlistId, position: next }
+			const positions: number[] = []
+			for (const t of tracks) {
+				const trackId = this.#upsertTrack(t)
+				const existing = findPosition.get(playlistId, trackId) as { position: number } | undefined
+				if (existing) {
+					positions.push(existing.position)
+					continue
+				}
+				link.run(playlistId, next, trackId)
+				positions.push(next++)
+			}
+			this.db.prepare('UPDATE playlists SET track_count = ? WHERE id = ?').run(next, playlistId)
+			return { playlistId, positions }
 		})
 		this.events.emit({ type: 'library' })
 		this.events.emit({ type: 'playlist', playlistId: added.playlistId })
@@ -625,7 +652,7 @@ export class Library {
 		const t = this.db.prepare('SELECT * FROM tracks WHERE id = ?').get(trackId) as
 			| {
 					id: number
-					source: PlaylistSource
+					source: TrackSource
 					source_id: string
 					title: string
 					artists: string
@@ -634,6 +661,7 @@ export class Library {
 					isrc: string | null
 					cover_url: string | null
 					url: string | null
+					free_download: string | null
 			  }
 			| undefined
 		if (!t) throw new Error('Tema no encontrado')
@@ -646,6 +674,7 @@ export class Library {
 			album: t.album ?? undefined,
 			durationMs: t.duration_ms ?? undefined,
 			isrc: t.isrc ?? undefined,
+			freeDownload: fromJson<FreeDownload>(t.free_download),
 			coverUrl: t.cover_url ?? undefined,
 			url: t.url ?? undefined
 		}

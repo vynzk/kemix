@@ -344,7 +344,8 @@ export class DownloadQueue {
 			}
 		}
 		const target = match?.target
-		if (!target || target.maxQuality) return
+		// Con descarga gratis (SoundCloud) la calidad no se sabe hasta bajarlo: no se rellena con la del stream.
+		if (!target || target.maxQuality || target.freeDownload) return
 		// Matched straight from the playlist's own service (a Qobuz or Deezer playlist): its quality comes with the track.
 		const { meta } = await (await this.accounts.downloader(target.service)).getTrack(target.url)
 		if (!meta.maxQuality) return

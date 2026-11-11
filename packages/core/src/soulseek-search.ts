@@ -6,7 +6,7 @@ import type { EventBus } from './events'
 import type { Library } from './library'
 import type { DownloadQueue } from './download/queue'
 import type { SettingsStore } from './settings'
-import type { SlskFile, SlskSearch } from './types'
+import type { OutputFormat, QualityLevel, SlskFile, SlskSearch } from './types'
 import { prefersLossless, rankFiles, slskQuery, toSlskFiles } from './sources/soulseek'
 import { errorMessage } from './util'
 
@@ -97,12 +97,31 @@ export class SoulseekSearches {
 		this.#searches.get(id)?.abort.abort()
 	}
 
-	/** Baja un archivo de una búsqueda: lo agrega a la playlist local "Soulseek" y lo pone en la cola. */
-	async download(searchId: string, username: string, path: string): Promise<{ playlistId: number }> {
+	/**
+	 * Baja un archivo de una búsqueda: lo agrega a la playlist local "Soulseek" y lo pone en la cola, en la calidad y
+	 * el formato elegidos (sin ellos, los de Ajustes). El tema apunta al archivo (`url` slsk://): se baja ese mismo.
+	 */
+	async download(
+		searchId: string,
+		username: string,
+		path: string,
+		level?: QualityLevel | null,
+		format?: OutputFormat | null
+	): Promise<{ playlistId: number }> {
 		const file = this.#searches.get(searchId)?.state.results.find((f) => f.username === username && f.path === path)
 		if (!file) throw new Error('Ese resultado ya no está: busca de nuevo')
-		const { playlistId, position } = this.library.addSoulseekFile(file)
-		await this.queue.enqueuePlaylist(playlistId, [position], 'soulseek')
+		const { playlistId, positions } = this.library.addToLocalPlaylist('soulseek', [
+			{
+				source: 'soulseek',
+				sourceId: file.url,
+				url: file.url,
+				title: file.title,
+				artists: file.artists,
+				album: file.album,
+				durationMs: file.durationMs
+			}
+		])
+		await this.queue.enqueuePlaylist(playlistId, positions, 'soulseek', level, format)
 		return { playlistId }
 	}
 

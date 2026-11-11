@@ -1,4 +1,4 @@
-import type { AccountIdentity, SourcePlaylist, SourceTrack } from '../types'
+import type { AccountIdentity, FreeDownload, SourcePlaylist, SourceTrack } from '../types'
 import type { SourceConnector } from './types'
 import { cleanArtist } from '../match/score'
 import { getCookie, normalizeCookieInput } from './cookies'
@@ -81,6 +81,61 @@ export interface RawTrack {
 	artwork_url?: string | null
 	user?: { username?: string; avatar_url?: string }
 	publisher_metadata?: { artist?: string; album_title?: string; isrc?: string } | null
+	/** El artista deja bajar el archivo que subió, desde SoundCloud. */
+	downloadable?: boolean
+	has_downloads_left?: boolean
+	/** El botón de compra: a veces es una descarga gratis («Free Download» → Hypeddit, Dropbox…). */
+	purchase_url?: string | null
+	purchase_title?: string | null
+	description?: string | null
+	genre?: string | null
+}
+
+/** Cómo marcan los artistas una descarga gratis, en el botón de compra o en la descripción. */
+const FREE_TITLE = /\bfree\b|gratis|\bdownload\b|descarga|\bf?dl\b/i
+const FREE_LINE = /\bfree\b|gratis|\bf?dl\b/i
+/** Sitios de descargas gratis (suelen pedir seguir al artista, un like o un email a cambio). */
+const FREE_HOSTS =
+	/(^|\.)(hypeddit\.com|toneden\.io|gate\.fm|hive\.co|dropbox\.com|drive\.google\.com|mega\.nz|mediafire\.com|wetransfer\.com|we\.tl)$/i
+/** Tiendas: un enlace a ellas no es una descarga gratis aunque el botón diga «Download». */
+const STORE_HOSTS =
+	/(^|\.)(beatport\.com|traxsource\.com|junodownload\.com|bandcamp\.com|apple\.com|amazon\.\w+|spotify\.com|deezer\.com|tidal\.com|qobuz\.com|7digital\.com)$/i
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/gi
+
+function hostOf(url: string): string | null {
+	try {
+		return new URL(url).hostname
+	} catch {
+		return null
+	}
+}
+
+/** Un enlace de descarga gratis en una descripción: de un sitio de descargas, o en una línea que dice «free». */
+export function freeLinkIn(text: string | null | undefined): FreeDownload | null {
+	if (!text) return null
+	for (const line of text.split(/\r?\n/)) {
+		for (const [url] of line.matchAll(URL_RE)) {
+			const host = hostOf(url)
+			if (!host || STORE_HOSTS.test(host)) continue
+			if (FREE_HOSTS.test(host) || FREE_LINE.test(line.replace(url, ' '))) return { kind: 'link', url }
+		}
+	}
+	return null
+}
+
+/**
+ * Si un tema se baja gratis: con la descarga de SoundCloud (el archivo que subió el artista), o con el enlace que dejó
+ * en el botón de compra o en la descripción.
+ */
+export function freeDownloadOf(t: RawTrack): FreeDownload | null {
+	if (t.downloadable && t.has_downloads_left !== false && t.permalink_url) return { kind: 'soundcloud', url: t.permalink_url }
+	if (t.purchase_url) {
+		const host = hostOf(t.purchase_url)
+		if (host && !STORE_HOSTS.test(host) && (FREE_HOSTS.test(host) || FREE_TITLE.test(t.purchase_title ?? ''))) {
+			return { kind: 'link', url: t.purchase_url }
+		}
+	}
+	return freeLinkIn(t.description)
 }
 
 interface RawPlaylist {
@@ -116,8 +171,36 @@ export function toSourceTrack(t: RawTrack): SourceTrack | null {
 		durationMs: duration || undefined,
 		isrc: t.publisher_metadata?.isrc || undefined,
 		coverUrl: artwork(t.artwork_url ?? t.user?.avatar_url),
-		url: t.permalink_url
+		url: t.permalink_url,
+		freeDownload: freeDownloadOf(t) ?? undefined
 	}
+}
+
+/**
+ * Una petición a la API sin cuenta, solo con el client id público (como el reproductor web y yt-dlp). `pathOrUrl`
+ * puede ser un `next_href` completo.
+ */
+export async function publicGet<T>(pathOrUrl: string, query: Record<string, string | number> = {}): Promise<T> {
+	for (const retry of [false, true]) {
+		const url = new URL(pathOrUrl, API)
+		for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v))
+		url.searchParams.set('client_id', await getClientId(retry))
+		const res = await fetch(url, { headers: { 'user-agent': USER_AGENT, accept: 'application/json' } })
+		if (res.ok) return (await res.json()) as T
+		// Un client id viejo también da 401/403: se pide otro una vez.
+		if ((res.status === 401 || res.status === 403) && !retry) continue
+		throw new Error(`SoundCloud respondió ${res.status} ${res.statusText}`)
+	}
+	throw new Error('SoundCloud no aceptó el client id de su web')
+}
+
+/** Varios temas por id, 50 por petición (sin cuenta). */
+export async function fetchTracksById(ids: string[]): Promise<RawTrack[]> {
+	const out: RawTrack[] = []
+	for (let i = 0; i < ids.length; i += 50) {
+		out.push(...(await publicGet<RawTrack[]>('tracks', { ids: ids.slice(i, i + 50).join(',') })))
+	}
+	return out
 }
 
 /** A signed-in SoundCloud account: its playlists, the playlists it liked, its liked tracks, and search. */

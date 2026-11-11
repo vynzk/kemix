@@ -264,8 +264,9 @@ function SoundCloudDownloadNote({ connected, quality }: { connected: boolean; qu
 				Descarga la mejor calidad que tenga cada tema, hasta{' '}
 				<span className={qualityTone(quality ?? null)}>{quality ? qualityLabel(quality) : 'AAC 160 kbps'}</span> (con
 				pérdida), o el <b className="text-zinc-300">archivo original</b> que subió el artista si permite descargarlo (a
-				veces WAV o FLAC, sin pérdida). Como YouTube, es un respaldo: actívalo en Ajustes → Prioridad de servicios o
-				elígelo a mano al bajar o revisar un tema.
+				veces WAV o FLAC, sin pérdida). Los temas con descarga gratis llevan el botón{' '}
+				<b className="text-emerald-300">⬇ Descarga gratis</b>, en Buscar, Explorar, Revisión y las playlists. Como
+				YouTube, es un respaldo: actívalo en Ajustes → Prioridad de servicios o elígelo a mano al bajar o revisar un tema.
 			</p>
 			<p className={connected ? 'text-emerald-300/90' : ''}>
 				{connected

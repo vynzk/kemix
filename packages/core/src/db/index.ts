@@ -150,7 +150,9 @@ const MIGRATIONS: string[] = [
 		error TEXT,
 		updated_at INTEGER NOT NULL
 	);
-	`
+	`,
+	// 8: temas de SoundCloud que se pueden bajar gratis (JSON de FreeDownload: descarga de SoundCloud o enlace del artista).
+	`ALTER TABLE tracks ADD COLUMN free_download TEXT;`
 ]
 
 export function openDb(file: string): Db {
