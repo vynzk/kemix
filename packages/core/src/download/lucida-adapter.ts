@@ -27,8 +27,12 @@ export interface Downloader {
 	/**
 	 * `open` gives the best audio the track has up to `level`. `format` is the file format the download will be saved
 	 * in: services that deliver it themselves (Soundeo's AIFF and WAV) send it, so there's nothing to convert.
+	 * `signal` cancela la espera antes de que empiece el audio (Soulseek puede tener el archivo en la cola de otro usuario).
 	 */
-	getTrack(url: string): Promise<{ meta: TargetTrack; open(level: QualityLevel, format?: OutputFormat): Promise<AudioStream> }>
+	getTrack(url: string): Promise<{
+		meta: TargetTrack
+		open(level: QualityLevel, format?: OutputFormat, signal?: AbortSignal): Promise<AudioStream>
+	}>
 	accountInfo(): Promise<{ premium?: boolean; country?: string }>
 	/** Best quality this account can download (the subscription's ceiling, not a specific track's). */
 	accountQuality(): Promise<AudioQuality>

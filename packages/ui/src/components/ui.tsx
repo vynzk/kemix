@@ -1,5 +1,5 @@
 import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
-import type { DownloadStatus, MatchStatus, SourceService } from '@kemix/core'
+import type { AccountService, DownloadStatus, MatchStatus } from '@kemix/core'
 import { SERVICE_COLOR, SERVICE_LABEL, cx } from '../lib/format'
 
 export function Button({
@@ -55,7 +55,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 	)
 }
 
-export function ServiceDot({ service, withLabel }: { service: SourceService; withLabel?: boolean }) {
+export function ServiceDot({ service, withLabel }: { service: AccountService; withLabel?: boolean }) {
 	return (
 		<span className="inline-flex items-center gap-1.5 text-xs text-muted">
 			<span className="h-2 w-2 shrink-0 rounded-full" style={{ background: SERVICE_COLOR[service] }} />

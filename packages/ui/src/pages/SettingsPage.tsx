@@ -14,7 +14,7 @@ import {
 import { Button, ErrorText, Field, Input, PageHeader } from '../components/ui'
 
 /** Everything that can download; the UI keeps @kemix/core type-only, so the list lives here too. */
-const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'youtube', 'soundcloud']
+const ALL_DOWNLOADERS: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'soulseek', 'youtube', 'soundcloud']
 
 export function SettingsPage() {
 	const qc = useQueryClient()
@@ -58,7 +58,7 @@ export function SettingsPage() {
 				</Field>
 				<Field
 					label="Prioridad de servicios de descarga"
-					hint="En modo automático se busca primero en el de arriba. Soundeo solo baja con Premium, y cada tema nuevo gasta una de las descargas del día de tu plan: ponlo debajo de Qobuz y Deezer para usarlo solo con lo que no esté ahí. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
+					hint="En modo automático se busca primero en el de arriba. Soundeo solo baja con Premium, y cada tema nuevo gasta una de las descargas del día de tu plan: ponlo debajo de Qobuz y Deezer para usarlo solo con lo que no esté ahí. Soulseek baja archivos de otros usuarios: es más lento (a veces hay que esperar en su cola) y cada archivo tiene su calidad, así que conviene dejarlo después de los servicios de pago. YouTube (AAC ~128 kbps) y SoundCloud (hasta AAC 160 kbps) son con pérdida: solo se usan si los activas, y solo cuando ningún servicio sin pérdida tiene el tema."
 				>
 					<ol className="space-y-1">
 						{priority.map((s, i) => (
@@ -193,6 +193,18 @@ export function SettingsPage() {
 				</Field>
 				<Field label="Puerto local" hint="Usado por la redirección OAuth de Spotify. Requiere reiniciar la app.">
 					<Input type="number" value={draft.port} onChange={(e) => set('port', Number(e.target.value))} />
+				</Field>
+				<Field
+					label="Puerto de Soulseek"
+					hint="Donde Kemix recibe las conexiones de otros usuarios de Soulseek (TCP). Ábrelo o redirígelo en tu router hacia este equipo para llegar a más usuarios; sin eso solo se baja de quienes sí lo tienen abierto. Si usas Nicotine+ o SoulseekQt en este equipo, elige otro puerto (ellos suelen usar el 2234)."
+				>
+					<Input
+						type="number"
+						min={1024}
+						max={65535}
+						value={draft.soulseekPort}
+						onChange={(e) => set('soulseekPort', Number(e.target.value))}
+					/>
 				</Field>
 				<Field
 					label="Ruta de yt-dlp (opcional)"

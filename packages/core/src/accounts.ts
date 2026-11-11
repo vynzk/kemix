@@ -8,13 +8,14 @@ import type {
 	AccountStatus,
 	AudioQuality,
 	DownloadService,
+	SoulseekStatus,
 	SoundeoStatus,
 	SourceService,
 	SourceTrack,
 	StreamPreview,
 	TargetService
 } from './types'
-import { ACCOUNT_SERVICES, DOWNLOAD_SERVICES, isLossyService, isSourceService } from './types'
+import { ACCOUNT_SERVICES, DOWNLOAD_SERVICES, isLossyService, isSourceService, isTargetService } from './types'
 import type { SourceConnector } from './sources/types'
 import { QobuzApi, QobuzSource, scrapeQobuzAppCredentials, type QobuzCredentials } from './sources/qobuz'
 import { parseQobuzSession } from './sources/qobuz-session'
@@ -33,6 +34,8 @@ import { SoundCloud } from './sources/soundcloud'
 import { extractSoundCloudToken, SoundCloudSource } from './sources/soundcloud-api'
 import { ManagedYtDlp, YtDlp } from './sources/yt-dlp'
 import { SoundeoApi, SoundeoDownloader, type SoundeoAccountState } from './sources/soundeo'
+import { SlskClient, type SlskClientOptions } from './sources/soulseek-client'
+import { prefersLossless, SoulseekDownloader } from './sources/soulseek'
 import { createDeezerDownloader, createQobuzDownloader, type Downloader } from './download/lucida-adapter'
 import { errorMessage, now } from './util'
 
@@ -63,6 +66,12 @@ interface SoundeoSecret {
 	email: string
 	password: string
 	cookies: Record<string, string>
+}
+
+/** Soulseek inicia sesión con usuario y contraseña cada vez que se conecta al servidor. */
+interface SoulseekSecret {
+	username: string
+	password: string
 }
 
 interface YtMusicSecret {
@@ -130,7 +139,9 @@ export class Accounts {
 		private settings: SettingsStore,
 		private events: EventBus,
 		/** Where Kemix keeps the tools it downloads for itself (its own yt-dlp). */
-		binDir: string
+		binDir: string,
+		/** Cómo se conecta Soulseek: por defecto TCP y el servidor real; los tests pasan una red en memoria. */
+		private soulseekOptions: Pick<SlskClientOptions, 'transport' | 'server' | 'timing'> = {}
 	) {
 		const ytDlp = new YtDlp(() => this.settings.get().ytDlpPath, new ManagedYtDlp(binDir))
 		this.soundcloud = new SoundCloud(ytDlp, () =>
@@ -203,6 +214,8 @@ export class Accounts {
 	 * reused if the same tracks are downloaded again.
 	 */
 	#forgetPreviousAccount(service: AccountService, next: { name?: string | null; email?: string | null }) {
+		// Only sources have playlists of their own (Soulseek's local playlist doesn't belong to the account).
+		if (!isSourceService(service)) return
 		const prev = this.db.prepare('SELECT display_name, email FROM accounts WHERE service = ?').get(service) as
 			| { display_name: string | null; email: string | null }
 			| undefined
@@ -255,8 +268,18 @@ export class Accounts {
 	/** Drop the cached clients of an account, so the next use starts from its stored credentials. */
 	#forgetClients(service: AccountService) {
 		if (isSourceService(service)) this.#sources.delete(service)
-		if (service === 'qobuz' || service === 'deezer' || service === 'soundeo') this.#downloaders.delete(service)
+		if (isTargetService(service)) this.#downloaders.delete(service)
 		if (service === 'soundeo') this.#soundeoApi = undefined
+		if (service === 'soulseek') {
+			this.#soulseekClient?.destroy()
+			this.#soulseekClient = undefined
+		}
+	}
+
+	/** Cierra las conexiones abiertas (al salir de la app). */
+	close() {
+		this.#soulseekClient?.destroy()
+		this.#soulseekClient = undefined
 	}
 
 	// ---- Qobuz ----
@@ -422,6 +445,89 @@ export class Accounts {
 		const api = this.isConnected('soundeo') ? this.#soundeo() : new SoundeoApi()
 		const url = await api.preview(trackId)
 		return url ? { url, full: false } : null
+	}
+
+	// ---- Soulseek ----
+
+	#soulseekClient?: SlskClient
+
+	#newSoulseekClient(username: string, password: string): SlskClient {
+		const client: SlskClient = new SlskClient({
+			...this.soulseekOptions,
+			username,
+			password,
+			port: () => this.settings.get().soulseekPort,
+			onSessionLost: (err) => {
+				if (this.#soulseekClient === client) this.reportError('soulseek', err)
+			}
+		})
+		return client
+	}
+
+	/** La sesión de Soulseek de la cuenta conectada. Inicia sesión al usarse por primera vez. */
+	soulseek(): SlskClient {
+		if (this.#soulseekClient) return this.#soulseekClient
+		const stored = this.secrets.get<SoulseekSecret>('soulseek')
+		if (!stored) throw new Error('Soulseek no está conectado')
+		this.#soulseekClient = this.#newSoulseekClient(stored.username, stored.password)
+		return this.#soulseekClient
+	}
+
+	/** El downloader de Soulseek: la pantalla de búsqueda le pasa lo que encuentra, para tener otras fuentes. */
+	async soulseekDownloader(): Promise<SoulseekDownloader> {
+		return (await this.downloader('soulseek')) as SoulseekDownloader
+	}
+
+	/**
+	 * Conecta Soulseek con usuario y contraseña. Soulseek crea la cuenta la primera vez que alguien entra con un
+	 * nombre libre, así que un usuario nuevo también sirve. La primera vez, Soulseek entra en la prioridad de descarga
+	 * después de los servicios sin pérdida: se usa para lo que no esté en ellos.
+	 */
+	async connectSoulseek(input: { username: string; password: string }): Promise<SoulseekStatus> {
+		const wasConnected = this.isConnected('soulseek')
+		try {
+			const username = input.username.trim()
+			if (!username || !input.password) throw new Error('Escribe el usuario y la contraseña de Soulseek')
+			const previous = this.#soulseekClient
+			// Mientras se prueba la cuenta nueva, los avisos de la sesión anterior ya no cuentan.
+			this.#soulseekClient = undefined
+			const client = this.#newSoulseekClient(username, input.password)
+			try {
+				await step('Iniciar sesión en Soulseek', () => client.login())
+			} catch (err) {
+				client.destroy()
+				this.#soulseekClient = previous
+				throw err
+			}
+			previous?.destroy()
+			this.#soulseekClient = client
+			this.secrets.set('soulseek', { username, password: input.password } satisfies SoulseekSecret)
+			this.#setStatus('soulseek', 'connected', { name: username })
+			if (!wasConnected) this.#addToPriority('soulseek')
+			return { ...client.status(), error: null }
+		} catch (err) {
+			// Cambiar de cuenta falló: la conexión actual sigue funcionando, no se marca como rota.
+			if (!wasConnected) this.#setStatus('soulseek', 'error', { error: errorMessage(err) })
+			throw err
+		}
+	}
+
+	/** Si la sesión de Soulseek está en línea, y si otros usuarios pueden conectarse directamente con Kemix. */
+	async soulseekStatus(): Promise<SoulseekStatus> {
+		if (!this.isConnected('soulseek')) throw new Error('Soulseek no está conectado')
+		const client = this.soulseek()
+		try {
+			await client.login()
+			return { ...client.status(), error: null }
+		} catch (err) {
+			return { ...client.status(), error: errorMessage(err) }
+		}
+	}
+
+	/** Cambió el puerto de Soulseek en Ajustes: la sesión se vuelve a abrir, escuchando en el nuevo. */
+	soulseekPortChanged() {
+		this.#soulseekClient?.destroy()
+		this.#soulseekClient = undefined
 	}
 
 	/** Put a download service in the priority list, before the lossy ones, unless it's already there. */
@@ -635,6 +741,12 @@ export class Accounts {
 
 	async #createDownloader(service: TargetService): Promise<Downloader> {
 		if (service === 'soundeo') return new SoundeoDownloader(this.#soundeo())
+		if (service === 'soulseek') {
+			return new SoulseekDownloader(
+				() => this.soulseek(),
+				() => prefersLossless(this.settings.get().downloadQuality)
+			)
+		}
 		if (service === 'qobuz') {
 			const c = this.secrets.get<QobuzCredentials>('qobuz')
 			if (!c) throw new Error('Qobuz no está conectado')

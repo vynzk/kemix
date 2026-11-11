@@ -65,6 +65,7 @@ interface KnownFile {
 }
 
 export class DownloadQueue {
+	#stopped = false
 	#running = new Set<number>()
 	/** One per running download, to stop it when it's deleted. */
 	#aborts = new Map<number, AbortController>()
@@ -277,6 +278,16 @@ export class DownloadQueue {
 	}
 
 	/**
+	 * Al cerrar la app: no se toman más descargas y se cortan las que están en curso, antes de cerrar la base de
+	 * datos (Soulseek, al desconectarse, haría fallar las que esperan en colas de otros usuarios). Se retoman al volver.
+	 */
+	stop() {
+		this.#stopped = true
+		this.stopScans()
+		for (const abort of this.#aborts.values()) abort.abort()
+	}
+
+	/**
 	 * Whether a scan has to look the track up: never looked up, matched elsewhere than the provider picked, or left
 	 * unresolved last time (it may be found now). A track the user skipped stays skipped unless a provider is picked.
 	 */
@@ -353,7 +364,7 @@ export class DownloadQueue {
 		const queries = query?.trim() ? [query.trim()] : searchQueries(track)
 		const threshold = this.settings.get().autoAcceptThreshold
 		const downloaders = provider ? [await this.#downloaderFor(provider)] : await this.accounts.downloaders()
-		if (!downloaders.length) throw new Error('Conecta Qobuz, Deezer o Soundeo, o busca en YouTube o SoundCloud')
+		if (!downloaders.length) throw new Error('Conecta Qobuz, Deezer, Soundeo o Soulseek, o busca en YouTube o SoundCloud')
 		const out: MatchCandidate[] = []
 		const failures: string[] = []
 		for (const d of downloaders) {
@@ -424,10 +435,9 @@ export class DownloadQueue {
 	): Promise<TrackPreview | null> {
 		let native: StreamPreview | null = null
 		try {
-			native =
-				service === 'soundeo'
-					? await this.accounts.soundeoPreview(track.sourceId)
-					: ((await this.accounts.source(service).stream?.(track.sourceId)) ?? null)
+			// Soulseek has no clips: a file only plays once it's downloaded.
+			if (service === 'soundeo') native = await this.accounts.soundeoPreview(track.sourceId)
+			else if (service !== 'soulseek') native = (await this.accounts.source(service).stream?.(track.sourceId)) ?? null
 		} catch {
 			// Not connected, or the service refused: YouTube is still there.
 		}
@@ -508,6 +518,7 @@ export class DownloadQueue {
 	// ---------- worker ----------
 
 	#pump() {
+		if (this.#stopped) return
 		const limit = this.settings.get().concurrency
 		while (this.#running.size < limit) {
 			const placeholders = [...this.#running].join(',') || '0'
@@ -550,7 +561,9 @@ export class DownloadQueue {
 		const track = this.library.getTrack(trackId)
 		const downloaders = provider ? [await this.accounts.downloader(provider)] : await this.accounts.downloaders()
 		if (!downloaders.length) {
-			throw new Error('Conecta Qobuz, Deezer o Soundeo (o activa YouTube o SoundCloud en Ajustes) para poder descargar')
+			throw new Error(
+				'Conecta Qobuz, Deezer, Soundeo o Soulseek (o activa YouTube o SoundCloud en Ajustes) para poder descargar'
+			)
 		}
 		const res = await resolveTrack(track, downloaders, this.settings.get().autoAcceptThreshold, {
 			findIsrc: (t, minScore) => this.accounts.findIsrc(t, minScore)
@@ -604,9 +617,10 @@ export class DownloadQueue {
 			)
 
 		// Already downloaded for another playlist (or a previous run): link or copy instead of downloading again.
-		// YouTube/SoundCloud titles and uploaders are not real metadata: name and tag the file after the source track instead.
+		// YouTube/SoundCloud titles and uploaders are not real metadata, nor is what a Soulseek file's path says: name
+		// and tag the file after the source track instead.
 		const fromSource = (t: TargetTrack): TargetTrack =>
-			isLossyService(target.service)
+			isLossyService(target.service) || target.service === 'soulseek'
 				? {
 						...t,
 						title: track.title,
@@ -660,7 +674,7 @@ export class DownloadQueue {
 		const got = await downloader.getTrack(target.url)
 		const meta = fromSource(got.meta)
 		signal.throwIfAborted()
-		const audio = await got.open(level, format)
+		const audio = await got.open(level, format, signal)
 		if (signal.aborted) {
 			audio.stream.destroy()
 			signal.throwIfAborted()

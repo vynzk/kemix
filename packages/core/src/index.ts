@@ -10,6 +10,8 @@ import { DownloadQueue } from './download/queue'
 import { Ffmpeg, ManagedFfmpeg, type AudioConverter, type AudioDecoder } from './download/ffmpeg'
 import { FeatureAnalyzer } from './features/analyzer'
 import type { FeatureSources } from './features/lookup'
+import { SoulseekSearches } from './soulseek-search'
+import type { SlskClientOptions } from './sources/soulseek-client'
 
 export * from './types'
 export { passphraseCipher, type Cipher } from './secrets'
@@ -20,6 +22,7 @@ export type { Library } from './library'
 export type { DownloadQueue } from './download/queue'
 export type { AudioConverter, AudioDecoder, Mp3Converter, PcmFormat } from './download/ffmpeg'
 export type { FeatureAnalyzer } from './features/analyzer'
+export type { SoulseekSearches } from './soulseek-search'
 export { FeatureSources } from './features/lookup'
 export type { YtMusicAccount } from './sources/ytmusic'
 
@@ -36,6 +39,8 @@ export interface KemixOptions {
 	decoder?: AudioDecoder
 	/** Catalogs for key and BPM; tests pass one without request delays. */
 	featureSources?: FeatureSources
+	/** Cómo se conecta Soulseek; los tests pasan una red en memoria. */
+	soulseek?: Pick<SlskClientOptions, 'transport' | 'server' | 'timing'>
 }
 
 /** The whole backend, independent of how it is exposed (Electron, HTTP server…). */
@@ -48,6 +53,8 @@ export class Kemix {
 	readonly library: Library
 	readonly queue: DownloadQueue
 	readonly features: FeatureAnalyzer
+	/** Búsquedas libres en Soulseek y descargas de archivos sueltos. */
+	readonly soulseek: SoulseekSearches
 
 	constructor(opts: KemixOptions) {
 		fs.mkdirSync(opts.dataDir, { recursive: true })
@@ -55,7 +62,7 @@ export class Kemix {
 		this.settings = new SettingsStore(this.db)
 		this.secrets = new SecretStore(this.db, opts.cipher)
 		const binDir = path.join(opts.dataDir, 'bin')
-		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, binDir)
+		this.accounts = new Accounts(this.db, this.secrets, this.settings, this.events, binDir, opts.soulseek)
 		this.library = new Library(this.db, this.accounts, this.events)
 		const ffmpeg = new Ffmpeg(new ManagedFfmpeg(binDir))
 		this.features = new FeatureAnalyzer(
@@ -76,6 +83,7 @@ export class Kemix {
 			opts.converter ?? ffmpeg,
 			(trackId) => this.features.trackDownloaded(trackId)
 		)
+		this.soulseek = new SoulseekSearches(this.accounts, this.library, this.queue, this.settings, this.events)
 	}
 
 	start() {
@@ -85,8 +93,10 @@ export class Kemix {
 	}
 
 	close() {
-		this.queue.stopScans()
+		this.queue.stop()
 		this.features.stop()
+		this.soulseek.close()
+		this.accounts.close()
 		this.db.close()
 	}
 }

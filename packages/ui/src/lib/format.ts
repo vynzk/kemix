@@ -15,6 +15,7 @@ export const SERVICE_LABEL: Record<AccountService | DownloadService, string> = {
 	qobuz: 'Qobuz',
 	deezer: 'Deezer',
 	soundeo: 'Soundeo',
+	soulseek: 'Soulseek',
 	youtube: 'YouTube',
 	soundcloud: 'SoundCloud'
 }
@@ -22,6 +23,14 @@ export const SERVICE_LABEL: Record<AccountService | DownloadService, string> = {
 /** Mirrors `isLossyService` in @kemix/core (the UI only imports types from it): no account, lossy, only on request. */
 export function isLossy(service: DownloadService): service is 'youtube' | 'soundcloud' {
 	return service === 'youtube' || service === 'soundcloud'
+}
+
+/**
+ * Mirrors `serviceQualityLevel` en core: un archivo de Soulseek, como un video de YouTube, es el que es (no hay
+ * niveles que elegir); solo "MP3 320 kbps" da otro archivo, convertido.
+ */
+function oneFile(service: DownloadService): boolean {
+	return isLossy(service) || service === 'soulseek'
 }
 
 /** What a lossy service gives, to warn before downloading from it. */
@@ -65,7 +74,7 @@ export function qualityDetail(q: AudioQuality | null | undefined): string {
 function serviceLevel(service: DownloadService, level: QualityLevel): QualityLevel {
 	// Its own choice everywhere (in core it's the same file as MP3 320 on Qobuz/Deezer, but the user asked for it).
 	if (level === 'mp3_compat') return level
-	if (isLossy(service)) return 'max'
+	if (oneFile(service)) return 'max'
 	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
 	if (service === 'soundeo') return level === 'mp3_320' || level === 'mp3_128' ? 'mp3_320' : 'max'
 	return level === 'mp3_128' ? 'mp3_320' : level
@@ -108,12 +117,13 @@ export function expectedQuality(
 ): AudioQuality {
 	const l = fitQualityLevel(service, level, account)
 	if (l === 'mp3_compat') {
-		// YouTube/SoundCloud audio is converted (320 from a lossless original, else 192); Qobuz/Deezer send their MP3.
-		if (isLossy(service)) return max.codec === 'mp3' ? max : MP3(max.lossless ? 320 : 192)
+		// YouTube/SoundCloud/Soulseek audio is converted (320 from a lossless original, else 192); Qobuz/Deezer send
+		// their MP3.
+		if (oneFile(service)) return max.codec === 'mp3' ? max : MP3(max.lossless ? 320 : 192)
 		return account && !account.lossless && (account.bitrateKbps ?? 320) < 320 ? account : MP3(320)
 	}
 	let q = max
-	if (account && !isLossy(service) && qualityRank(account) < qualityRank(q)) q = account
+	if (account && !oneFile(service) && qualityRank(account) < qualityRank(q)) q = account
 	const cap = LEVEL_CAP[l]
 	if (cap && qualityRank(cap) < qualityRank(q)) q = cap
 	return q
@@ -188,7 +198,7 @@ export function groupPresets(presets: DownloadPreset[]): [string, DownloadPreset
  */
 function outcome(service: DownloadService, p: DownloadPreset, account?: AudioQuality): string {
 	let level = fitQualityLevel(service, p.level, account)
-	if (level === 'mp3_compat' && !isLossy(service)) level = fitQualityLevel(service, 'mp3_320', account)
+	if (level === 'mp3_compat' && !oneFile(service)) level = fitQualityLevel(service, 'mp3_320', account)
 	return `${level}:${p.format}`
 }
 
@@ -206,7 +216,7 @@ export function presetOptions(service?: DownloadService, account?: AudioQuality)
 		seen.add(key)
 		if (p.level !== 'max' || p.format !== 'original') out.push(p)
 		else {
-			const max = account && !isLossy(service) ? qualityLabel(account) : SERVICE_MAX_SHORT[service]
+			const max = account && !oneFile(service) ? qualityLabel(account) : SERVICE_MAX_SHORT[service]
 			const upTo = service === 'qobuz' && account?.lossless ? 'hasta ' : ''
 			out.push({ ...p, label: `Sin convertir · ${upTo}${max}` })
 		}
@@ -219,6 +229,7 @@ const SERVICE_MAX_SHORT: Record<DownloadService, string> = {
 	qobuz: 'hasta FLAC 24-bit/192 kHz',
 	deezer: 'FLAC 16-bit/44.1 kHz',
 	soundeo: 'WAV 16-bit/44.1 kHz',
+	soulseek: 'el archivo tal cual (FLAC, MP3…)',
 	youtube: 'AAC ~128 kbps (256 con Premium)',
 	soundcloud: 'hasta AAC 160 kbps u original'
 }
@@ -281,7 +292,8 @@ export const SERVICE_COLOR: Record<AccountService, string> = {
 	qobuz: '#4b8bf5',
 	deezer: '#a238ff',
 	soundcloud: '#ff5500',
-	soundeo: '#f5a623'
+	soundeo: '#f5a623',
+	soulseek: '#14b8a6'
 }
 
 // ---------- key and BPM ----------

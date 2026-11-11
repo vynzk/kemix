@@ -27,8 +27,9 @@ export function AccountsPage() {
 		<div>
 			<PageHeader title="Cuentas">
 				Qobuz y Deezer sirven para importar playlists <b>y</b> para descargar. Spotify y YouTube Music importan playlists.
-				Soundeo solo descarga (WAV, AIFF o MP3 320, con su Premium). SoundCloud importa tus playlists y Me gusta, y junto
-				con YouTube sirve de respaldo para descargar lo que no está en los demás.
+				Soundeo solo descarga (WAV, AIFF o MP3 320, con su Premium), y Soulseek también: archivos que comparten otros
+				usuarios. SoundCloud importa tus playlists y Me gusta, y junto con YouTube sirve de respaldo para descargar lo que
+				no está en los demás.
 			</PageHeader>
 			<div className="px-8 pt-8">
 				<AccountsGuide connected={(s) => get(s).status === 'connected'} />
@@ -109,6 +110,18 @@ export function AccountsPage() {
 				>
 					<SoundeoForm />
 				</AccountCard>
+				<AccountCard
+					account={get('soulseek')}
+					role="Buscar y descargar (red P2P)"
+					download={
+						<div className="space-y-2">
+							{download('soulseek')}
+							<SoulseekNote connected={get('soulseek').status === 'connected'} priority={priority} />
+						</div>
+					}
+				>
+					<SoulseekForm />
+				</AccountCard>
 				<ComingSoonCard name="Tidal" color="#e4e4e7" />
 			</div>
 		</div>
@@ -122,7 +135,8 @@ const GUIDE: { service: AccountService; imports: boolean; downloads: string | nu
 	{ service: 'spotify', imports: true, downloads: null },
 	{ service: 'ytmusic', imports: true, downloads: null },
 	{ service: 'soundcloud', imports: true, downloads: 'La mejor de cada tema; con cuenta, originales y Go+' },
-	{ service: 'soundeo', imports: false, downloads: 'WAV, AIFF o MP3 320, con Premium (temas por día según el plan)' }
+	{ service: 'soundeo', imports: false, downloads: 'WAV, AIFF o MP3 320, con Premium (temas por día según el plan)' },
+	{ service: 'soulseek', imports: false, downloads: 'Archivos que comparten otros usuarios: FLAC, WAV, MP3…' }
 ]
 
 /** How accounts work: some only import playlists, others also download, and the more download accounts the better. */
@@ -140,7 +154,7 @@ function AccountsGuide({ connected }: { connected: (s: AccountService) => boolea
 			<div className="mt-3 space-y-3 text-xs text-muted">
 				<p>
 					Cada cuenta que agregas sirve para algo distinto. Casi todas <b className="text-zinc-300">importan playlists</b>,
-					y algunas además (o solo, como Soundeo) <b className="text-zinc-300">permiten descargar</b> el audio:
+					y algunas además (o solo, como Soundeo y Soulseek) <b className="text-zinc-300">permiten descargar</b> el audio:
 				</p>
 				<ul className="grid gap-1.5 sm:grid-cols-2">
 					{GUIDE.map((g) => (
@@ -171,8 +185,8 @@ function AccountsGuide({ connected }: { connected: (s: AccountService) => boolea
 						importarlas.
 					</li>
 					<li>
-						Conecta Qobuz, Deezer y/o Soundeo para poder descargar en buena calidad, aunque tus playlists estén en otro
-						lado.
+						Conecta Qobuz, Deezer, Soundeo y/o Soulseek para poder descargar en buena calidad, aunque tus playlists estén
+						en otro lado.
 					</li>
 					<li>
 						Al descargar, elige la calidad y el formato. Para rekordbox, Serato o CDJ usa{' '}
@@ -203,23 +217,29 @@ function DownloadQuality(props: {
 	const plans = {
 		qobuz: 'FLAC hasta 24-bit/192 kHz (según el tema)',
 		deezer: 'FLAC 16-bit/44.1 kHz con HiFi, MP3 320 con Premium, MP3 128 gratis',
-		soundeo: 'WAV o AIFF 16-bit/44.1 kHz, o MP3 320, si la cuenta tiene Premium'
+		soundeo: 'WAV o AIFF 16-bit/44.1 kHz, o MP3 320, si la cuenta tiene Premium',
+		soulseek: 'lo que comparta cada usuario: FLAC, WAV, MP3…'
 	}[props.service]
 
 	if (!props.connected) return <p className="text-xs text-zinc-500">Al conectarla descarga en {plans}.</p>
 	return (
 		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-			<span>
-				Descarga hasta{' '}
-				{props.quality ? (
-					<span className={cx('font-medium', qualityTone(props.quality))}>{qualityLabel(props.quality)}</span>
-				) : props.loading ? (
-					'…'
-				) : (
-					<span title={plans}>calidad desconocida</span>
-				)}
-				{props.service === 'qobuz' && props.quality?.lossless && ' (según el tema)'}
-			</span>
+			{/* En Soulseek la calidad es la de cada archivo, no la de la cuenta. */}
+			{props.service === 'soulseek' ? (
+				<span>Descarga cada archivo tal como lo comparte su usuario (FLAC, WAV, MP3…)</span>
+			) : (
+				<span>
+					Descarga hasta{' '}
+					{props.quality ? (
+						<span className={cx('font-medium', qualityTone(props.quality))}>{qualityLabel(props.quality)}</span>
+					) : props.loading ? (
+						'…'
+					) : (
+						<span title={plans}>calidad desconocida</span>
+					)}
+					{props.service === 'qobuz' && props.quality?.lossless && ' (según el tema)'}
+				</span>
+			)}
 			{props.isDefault ? (
 				<span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-200">Descargador predeterminado</span>
 			) : (
@@ -587,6 +607,85 @@ function SoundeoForm() {
 			<ErrorText error={connect.error} />
 			<Button variant="primary" type="submit" disabled={connect.isPending || !email.trim() || !password}>
 				{connect.isPending ? 'Iniciando sesión…' : 'Conectar Soundeo'}
+			</Button>
+		</form>
+	)
+}
+
+/**
+ * Qué es Soulseek y qué hace falta antes de conectarlo; conectado, si la sesión está en línea y si otros usuarios
+ * pueden conectarse directamente con Kemix (el puerto).
+ */
+function SoulseekNote({ connected, priority }: { connected: boolean; priority: DownloadService[] }) {
+	const status = useQuery({
+		queryKey: ['soulseek-status'],
+		queryFn: api.soulseekStatus,
+		enabled: connected,
+		staleTime: 30_000,
+		retry: false
+	})
+	if (!connected) {
+		return (
+			<p className="text-xs text-muted">
+				Soulseek es una red P2P: bajas archivos que comparten otros usuarios, como FLAC sacados de CD, rarezas y edits que
+				no están en las tiendas. La calidad es la de cada archivo. Si el usuario no existe, Soulseek lo crea al conectar.
+				Kemix no comparte nada, solo busca y descarga: algunos usuarios rechazan a quien no comparte, y entonces se prueba
+				con otro que tenga el mismo archivo.
+			</p>
+		)
+	}
+	if (status.isLoading) return <p className="text-xs text-muted">Conectando con Soulseek…</p>
+	if (status.error || !status.data) return <ErrorText error={status.error} />
+	const s = status.data
+	return (
+		<div className="space-y-1.5 text-xs text-muted">
+			{s.error ? (
+				<p className="rounded-md bg-red-950/40 px-3 py-2 text-red-300">{s.error}</p>
+			) : s.listening ? (
+				<p>
+					<span className="font-medium text-emerald-300">En línea</span>, recibiendo conexiones en el puerto {s.port}. Para
+					llegar a más usuarios, abre (redirige) ese puerto TCP en tu router hacia este equipo.
+				</p>
+			) : (
+				<p className="rounded-md bg-amber-950/30 px-3 py-2 text-amber-300/90">
+					En línea, pero no se pudo abrir el puerto {s.port} (¿lo usa otro programa, como Nicotine+?). Solo podrás bajar
+					de usuarios que acepten conexiones. Cámbialo en Ajustes → Puerto de Soulseek.
+				</p>
+			)}
+			<p>
+				Busca y baja archivos sueltos en la pantalla <b className="text-zinc-300">Soulseek</b>.{' '}
+				{priority.includes('soulseek')
+					? `En las descargas automáticas se usa en el puesto ${priority.indexOf('soulseek') + 1} de la prioridad (Ajustes → Prioridad de servicios).`
+					: 'No está en la prioridad de descarga: elígelo al descargar una playlist, o añádelo en Ajustes → Prioridad de servicios.'}
+			</p>
+		</div>
+	)
+}
+
+function SoulseekForm() {
+	const [username, setUsername] = useState('')
+	const [password, setPassword] = useState('')
+	const connect = useConnect(api.connectSoulseek)
+	return (
+		<form
+			className="space-y-3"
+			onSubmit={(e) => {
+				e.preventDefault()
+				connect.mutate({ username, password }, { onSuccess: () => setPassword('') })
+			}}
+		>
+			<Field label="Usuario" hint="El de Soulseek (el mismo que en Nicotine+ o SoulseekQt), o uno nuevo para crearlo.">
+				<Input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+			</Field>
+			<Field
+				label="Contraseña"
+				hint="Kemix la guarda cifrada en este equipo para iniciar sesión cada vez que se conecta a Soulseek. No uses el mismo usuario a la vez en otro programa: el servidor cierra una de las dos sesiones."
+			>
+				<Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+			</Field>
+			<ErrorText error={connect.error} />
+			<Button variant="primary" type="submit" disabled={connect.isPending || !username.trim() || !password}>
+				{connect.isPending ? 'Conectando…' : 'Conectar Soulseek'}
 			</Button>
 		</form>
 	)

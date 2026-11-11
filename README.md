@@ -2,7 +2,8 @@
 
 App de escritorio para traer tus playlists de **Spotify, YouTube Music, Qobuz y Deezer**, ordenarlas en carpetas y
 descargarlas en FLAC desde **Qobuz** (o **Deezer** como respaldo) usando [`lucida`](https://www.npmjs.com/package/lucida),
-o en WAV/AIFF desde **Soundeo** con una cuenta Premium.
+en WAV/AIFF desde **Soundeo** con una cuenta Premium, o desde la red **Soulseek** (archivos que comparten otros
+usuarios).
 
 Página del proyecto: **[vynzk.github.io/kemix](https://vynzk.github.io/kemix/)**
 
@@ -33,6 +34,7 @@ Las descargas van a `~/Music/Kemix/<Playlist>/NN - Artista - Título.flac`, con 
 | Deezer | Las cookies de deezer.com (recomendado: archivo de Get cookies.txt; Kemix toma la cookie `arl`) o solo el valor de `arl` (DevTools → Application → Cookies). Caduca cada pocos meses. |
 | Spotify | **Cualquier cuenta (sin Premium)**, solo en la app de escritorio: "Iniciar sesión en Spotify" abre open.spotify.com en una ventana y Kemix usa la API interna del reproductor web (la Web API pública rechaza ese token con 429); la sesión se renueva sola cada hora en una ventana oculta. Carga playlists y Me gusta y permite buscar, pero no crear playlists ni leer ISRC (el matching va por título, artista y duración). **Premium (Client ID)**: una app propia en developer.spotify.com con el Redirect URI `http://127.0.0.1:47800/api/auth/spotify/callback`; pega su Client ID. Spotify solo abre su Web API a cuentas Premium: si la cuenta es gratis, Kemix avisa y propone el otro método. |
 | Soundeo | El email y la contraseña de soundeo.com (en la app de escritorio y en la versión web). Se conecta cualquier cuenta, pero Soundeo solo deja descargar a las **Premium** (no vende temas sueltos): sin Premium solo sirve para buscar. Kemix guarda la contraseña cifrada para volver a iniciar sesión cuando Soundeo cierra la sesión. |
+| Soulseek | Tu usuario y contraseña de Soulseek (los de Nicotine+ o SoulseekQt), o unos nuevos: si el usuario no existe, Soulseek lo crea al conectar. No uses el mismo usuario a la vez en otro programa (el servidor cierra una de las dos sesiones). Para llegar a más usuarios, abre o redirige en el router el puerto TCP de Ajustes → Puerto de Soulseek (2234 por defecto). |
 | YouTube Music | Las cookies de music.youtube.com (archivo de Get cookies.txt o el header `cookie`). Si hay varias cuentas de Google en la sesión, Kemix pregunta cuál usar. Google renueva estas cookies mientras el sitio sigue abierto y la copia exportada deja de valer: expórtalas desde una ventana de incógnito y ciérrala justo después, sin cerrar sesión. |
 
 **Cómo sacar cookies.txt:** instala la extensión [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
@@ -136,6 +138,24 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   vez una cuenta Premium, Soundeo entra en la prioridad de servicios detrás de Qobuz y Deezer, así que solo se usa con
   lo que esos no tienen (se puede mover o quitar en Ajustes). En Revisión, el ▶ de una opción de Soundeo reproduce su
   propio clip de ese mismo mix.
+- **Soulseek** (solo descarga, red P2P): Kemix habla el protocolo de Soulseek por su cuenta
+  (`packages/core/src/sources/soulseek-*.ts`, sin programas aparte): inicia sesión en el servidor, escucha en el puerto
+  de Ajustes para que otros usuarios le envíen resultados y archivos, y si no puede llegar a alguien directamente le
+  pide al servidor que ese usuario se conecte con él. No comparte nada: anuncia 0 archivos y rechaza lo que le piden.
+  - *En el matching*: al conectarlo por primera vez entra en la prioridad detrás de los servicios sin pérdida. Busca
+    por texto (Soulseek no tiene ISRC), deduce artista, título y álbum de la ruta de cada archivo ("Artista - Álbum
+    (2001) [FLAC]\01 - Título.flac") y lo compara como cualquier otro candidato; lo dudoso va a Revisión, donde también
+    se puede buscar a mano en Soulseek. Entre archivos igual de parecidos elige primero por calidad (sin pérdida, salvo
+    que la calidad de Ajustes sea MP3), luego quien puede enviarlo ya, con la cola más corta y más rápido. Los tags y
+    el nombre del archivo salen del tema de la playlist, no de la ruta.
+  - *Pantalla Soulseek* (aparece con la cuenta conectada): búsqueda libre, con los resultados llegando en vivo durante
+    unos segundos, agrupados por usuario y carpeta, con formato, calidad, tamaño, duración y si el usuario puede
+    enviarlo ya. "Descargar" agrega el archivo a la playlist local **Soulseek** de la Biblioteca y lo pone en la cola,
+    con la calidad y el formato de Ajustes (AIFF, WAV y MP3 se convierten como siempre).
+  - *Al descargar*: se pide el archivo y se espera en la cola de ese usuario hasta 3 minutos (o menos, si dice que hay
+    más de 10 delante). Si lo rechaza, no responde o tarda demasiado, se prueba con otros usuarios que tengan el mismo
+    archivo (mismo nombre y tamaño) o el mismo tema con la misma calidad y duración, hasta 3. Borrar la descarga corta
+    la espera.
 - **Versión web**: `packages/server/src/standalone.ts` corre todo sin Electron. Variables: `KEMIX_DATA_DIR`,
   `KEMIX_SECRET` (clave de cifrado de credenciales), `KEMIX_TOKEN`, `KEMIX_UI_DIR`, `KEMIX_HOST`, `KEMIX_PORT`.
   Para hacerla multiusuario falta añadir login de usuarios y separar los datos por usuario.
@@ -148,4 +168,9 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
 - La integración con YouTube Music no es oficial y puede romperse cuando YouTube cambie su web.
 - La de Soundeo tampoco: lee su web (`packages/core/src/sources/soundeo.ts`) y puede romperse si la cambian. Si
   Soundeo empieza a pedir captcha al iniciar sesión, hay que entrar una vez en soundeo.com desde el navegador.
+- Soulseek: sin el puerto abierto en el router solo se llega a los usuarios que sí lo tienen abierto (Kemix no usa
+  UPnP). Una descarga que espera en la cola de otro usuario ocupa uno de los huecos de descargas simultáneas hasta que
+  empieza o se agota la espera. El servidor filtra algunas búsquedas (artistas con reclamos de derechos), que no dan
+  resultados. Como Kemix no comparte archivos, algunos usuarios rechazan sus descargas. La calidad elegida al descargar
+  no cambia el archivo: se elige al buscar, según la calidad por defecto de Ajustes.
 - Descargar desde estos servicios va contra sus términos de uso; es para uso personal.

@@ -13,6 +13,8 @@ import type {
 	ReviewItem,
 	ScanState,
 	Settings,
+	SlskSearch,
+	SoulseekStatus,
 	SoundeoStatus,
 	SourceService,
 	SourceTrack,
@@ -75,6 +77,11 @@ export const api = {
 		request<SoundeoStatus>('POST', '/api/accounts/soundeo', body),
 	/** Whether the connected Soundeo account has Premium, and its downloads left today. */
 	soundeoStatus: () => request<SoundeoStatus>('GET', '/api/accounts/soundeo'),
+	/** Soulseek: usuario y contraseña (un usuario nuevo se crea al entrar por primera vez). */
+	connectSoulseek: (body: { username: string; password: string }) =>
+		request<SoulseekStatus>('POST', '/api/accounts/soulseek', body),
+	/** Si la sesión de Soulseek está en línea y si el puerto para otros usuarios está abierto. */
+	soulseekStatus: () => request<SoulseekStatus>('GET', '/api/accounts/soulseek'),
 	disconnect: (service: AccountService) => request('DELETE', `/api/accounts/${service}`),
 	/** Best quality each download service gives with the connected account. */
 	downloadQualities: () => request<Partial<Record<DownloadService, AudioQuality>>>('GET', '/api/accounts/quality'),
@@ -119,6 +126,14 @@ export const api = {
 		}),
 	createPlaylist: (service: SourceService, name: string, trackIds: string[]) =>
 		request<{ playlistId: number | null }>('POST', `/api/playlists/create/${service}`, { name, trackIds }),
+
+	/** Empieza una búsqueda libre en Soulseek; los resultados llegan con eventos `slsk-search` y se leen con la otra. */
+	startSoulseekSearch: (query: string) => request<SlskSearch>('POST', '/api/soulseek/searches', { query }),
+	soulseekSearch: (id: string) => request<SlskSearch>('GET', `/api/soulseek/searches/${encodeURIComponent(id)}`),
+	stopSoulseekSearch: (id: string) => request('POST', `/api/soulseek/searches/${encodeURIComponent(id)}/stop`),
+	/** Baja un resultado a la playlist "Soulseek". */
+	soulseekDownload: (searchId: string, username: string, path: string) =>
+		request<{ playlistId: number }>('POST', '/api/soulseek/download', { searchId, username, path }),
 
 	createFolder: (name: string, parentId: number | null) => request<Folder>('POST', '/api/folders', { name, parentId }),
 	updateFolder: (id: number, patch: { name?: string; parentId?: number | null }) =>

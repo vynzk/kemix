@@ -4,6 +4,8 @@ import type { Db } from './db'
 import { DOWNLOAD_SERVICES, isKeyNotation, isOutputFormat, isQualityLevel, type Settings } from './types'
 
 export const DEFAULT_PORT = 47800
+/** El de Nicotine+ y SoulseekQt. */
+export const DEFAULT_SOULSEEK_PORT = 2234
 
 export function defaultSettings(): Settings {
 	return {
@@ -18,7 +20,8 @@ export function defaultSettings(): Settings {
 		port: DEFAULT_PORT,
 		keyNotation: 'camelot',
 		getSongBpmKey: '',
-		writeKeyBpmTags: true
+		writeKeyBpmTags: true,
+		soulseekPort: DEFAULT_SOULSEEK_PORT
 	}
 }
 
@@ -58,7 +61,8 @@ function sanitize(s: Settings): Settings {
 		port: clamp(Math.round(s.port), 1024, 65535),
 		keyNotation: isKeyNotation(s.keyNotation) ? s.keyNotation : defaultSettings().keyNotation,
 		getSongBpmKey: typeof s.getSongBpmKey === 'string' ? s.getSongBpmKey.trim() : '',
-		writeKeyBpmTags: typeof s.writeKeyBpmTags === 'boolean' ? s.writeKeyBpmTags : defaultSettings().writeKeyBpmTags
+		writeKeyBpmTags: typeof s.writeKeyBpmTags === 'boolean' ? s.writeKeyBpmTags : defaultSettings().writeKeyBpmTags,
+		soulseekPort: clamp(Math.round(s.soulseekPort), 1024, 65535)
 	}
 }
 

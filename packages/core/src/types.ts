@@ -2,27 +2,37 @@
 
 /** Services playlists are imported from (and searched, and created in). */
 export type SourceService = 'spotify' | 'ytmusic' | 'qobuz' | 'deezer' | 'soundcloud'
-/** Services with an account in Kemix: the sources, plus Soundeo, which only downloads (it has no playlists). */
-export type AccountService = SourceService | 'soundeo'
+/**
+ * Services with an account in Kemix: the sources, plus Soundeo and Soulseek, which only download (they have no
+ * playlists).
+ */
+export type AccountService = SourceService | 'soundeo' | 'soulseek'
 /**
  * Download services that need an account, tried in the user's priority order: lossless where the account allows it.
- * Soundeo only downloads with Premium, and each new track uses one of the plan's daily downloads.
+ * Soundeo only downloads with Premium, and each new track uses one of the plan's daily downloads. Soulseek downloads
+ * files other users share (P2P): each file has its own quality.
  */
-export type TargetService = 'qobuz' | 'deezer' | 'soundeo'
+export type TargetService = 'qobuz' | 'deezer' | 'soundeo' | 'soulseek'
 /** Lossy download services: need no account (they go through yt-dlp) and are only used when the user asks for them. */
 export type LossyService = 'youtube' | 'soundcloud'
 /** Everything a track can be downloaded from. */
 export type DownloadService = TargetService | LossyService
+/**
+ * Where a library playlist comes from: a source service, or Kemix itself. "Soulseek" is a local playlist that collects
+ * the files downloaded from Soulseek's own search page.
+ */
+export type PlaylistSource = SourceService | 'soulseek'
 
 export const SOURCE_SERVICES: SourceService[] = ['spotify', 'ytmusic', 'qobuz', 'deezer', 'soundcloud']
-export const ACCOUNT_SERVICES: AccountService[] = [...SOURCE_SERVICES, 'soundeo']
-export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer', 'soundeo']
+export const ACCOUNT_SERVICES: AccountService[] = [...SOURCE_SERVICES, 'soundeo', 'soulseek']
+export const TARGET_SERVICES: TargetService[] = ['qobuz', 'deezer', 'soundeo', 'soulseek']
 export const LOSSY_SERVICES: LossyService[] = ['youtube', 'soundcloud']
-export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'youtube', 'soundcloud']
+export const DOWNLOAD_SERVICES: DownloadService[] = ['qobuz', 'deezer', 'soundeo', 'soulseek', 'youtube', 'soundcloud']
 export const DOWNLOAD_SERVICE_LABEL: Record<DownloadService, string> = {
 	qobuz: 'Qobuz',
 	deezer: 'Deezer',
 	soundeo: 'Soundeo',
+	soulseek: 'Soulseek',
 	youtube: 'YouTube',
 	soundcloud: 'SoundCloud'
 }
@@ -88,8 +98,10 @@ export function isQualityLevel(s: unknown): s is QualityLevel {
  */
 export function serviceQualityLevel(service: DownloadService, level: QualityLevel): QualityLevel {
 	// Qobuz/Deezer's own MP3 is already compatible; YouTube/SoundCloud's audio gets converted, so it's another file.
-	if (level === 'mp3_compat') return isLossyService(service) ? 'mp3_compat' : serviceQualityLevel(service, 'mp3_320')
-	if (isLossyService(service)) return 'max'
+	// A Soulseek file is what it is, like a YouTube upload: only the MP3 made from it is another file.
+	const oneFile = isLossyService(service) || service === 'soulseek'
+	if (level === 'mp3_compat') return oneFile ? 'mp3_compat' : serviceQualityLevel(service, 'mp3_320')
+	if (oneFile) return 'max'
 	if (service === 'deezer') return level === 'hires96' || level === 'cd' ? 'max' : level
 	// Soundeo: one lossless file (its WAV, or the AIFF made from it) and one MP3 (320).
 	if (service === 'soundeo') return level === 'mp3_320' || level === 'mp3_128' ? 'mp3_320' : 'max'
@@ -181,6 +193,47 @@ export interface SoundeoStatus {
 	resetsIn: string | null
 }
 
+/** La sesión de Soulseek ahora: si está en línea y si otros usuarios pueden conectarse directamente con Kemix. */
+export interface SoulseekStatus {
+	online: boolean
+	/** Kemix escucha en `port`. Si no, solo se llega a usuarios que sí reciben conexiones. */
+	listening: boolean
+	port: number
+	/** Por qué no está en línea, si no lo está. */
+	error: string | null
+}
+
+/** Un archivo que otro usuario comparte en Soulseek, con lo que se sabe de él. */
+export interface SlskFile {
+	username: string
+	/** Ruta en el equipo del otro usuario, tal cual (normalmente con `\`). */
+	path: string
+	/** `slsk://usuario/ruta`: identifica el archivo en el resto de Kemix (matches, descargas). */
+	url: string
+	size: number
+	/** Lo que se deduce de la ruta: "Artista - Álbum (2020) [FLAC]\01 - Título.flac". */
+	title: string
+	artists: string[]
+	album?: string
+	durationMs?: number
+	quality: AudioQuality | null
+	/** El usuario puede empezar a enviarlo ya. */
+	slotFree: boolean
+	/** Velocidad media de subida del usuario, en bytes/s. */
+	speed: number
+	/** Descargas esperando en la cola del usuario. */
+	queueLength: number
+}
+
+/** Una búsqueda libre en Soulseek: los resultados llegan durante unos segundos, de cada usuario por separado. */
+export interface SlskSearch {
+	id: string
+	query: string
+	running: boolean
+	results: SlskFile[]
+	error: string | null
+}
+
 export interface Settings {
 	downloadDir: string
 	/** Services tried, in order, when a download has no provider chosen. YouTube/SoundCloud (lossy) only if the user adds them. */
@@ -202,6 +255,8 @@ export interface Settings {
 	getSongBpmKey: string
 	/** Write the key and BPM into the downloaded files' tags (TKEY/TBPM, INITIALKEY/BPM), for DJ software. */
 	writeKeyBpmTags: boolean
+	/** Puerto en el que Kemix recibe conexiones de otros usuarios de Soulseek (hay que abrirlo en el router). */
+	soulseekPort: number
 }
 
 /**
@@ -248,7 +303,7 @@ export interface Folder {
 
 export interface PlaylistSummary {
 	id: number
-	source: SourceService
+	source: PlaylistSource
 	sourceId: string
 	name: string
 	owner: string | null
@@ -300,7 +355,7 @@ export interface ReviewItem {
 	artists: string[]
 	album: string | null
 	durationMs: number | null
-	source: SourceService
+	source: PlaylistSource
 	playlists: string[]
 	candidates: MatchCandidate[]
 	/** Not found on any lossless service: YouTube/SoundCloud are the remaining options. */
@@ -372,3 +427,5 @@ export type KemixEvent =
 	| { type: 'download'; row: DownloadRow }
 	| { type: 'download-removed'; id: number; playlistId: number }
 	| { type: 'review' }
+	/** Llegaron resultados a una búsqueda libre en Soulseek, o terminó. */
+	| { type: 'slsk-search'; id: string }

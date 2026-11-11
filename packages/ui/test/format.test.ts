@@ -58,6 +58,18 @@ describe('presetOptions', () => {
 		expect(expectedQuality(WAV, 'soundeo', 'cd', WAV)).toEqual(WAV)
 	})
 
+	it('en Soulseek, cada archivo es el que es: sin niveles, y "MP3 320" lo convierte', () => {
+		for (const options of [presetOptions('soulseek', HIRES), presetOptions('soulseek')]) {
+			expect(keys(options)).toEqual(['max:original', 'max:aiff', 'max:wav', 'mp3_compat:original'])
+			expect(options[0]!.label).toBe('Sin convertir · el archivo tal cual (FLAC, MP3…)')
+		}
+		// La calidad es la del archivo elegido, no la de la cuenta.
+		expect(expectedQuality(CD, 'soulseek', 'hires96', HIRES)).toEqual(CD)
+		expect(expectedQuality(MP3_128, 'soulseek', 'max', HIRES)).toEqual(MP3_128)
+		expect(expectedQuality(CD, 'soulseek', 'mp3_compat', HIRES)).toEqual({ codec: 'mp3', lossless: false, bitrateKbps: 320 })
+		expect(expectedQuality(MP3_128, 'soulseek', 'mp3_compat', HIRES)).toEqual(MP3_128)
+	})
+
 	it('keeps converting to MP3 where the service only has other lossy audio', () => {
 		expect(keys(presetOptions('youtube'))).toEqual(['max:original', 'max:aiff', 'max:wav', 'mp3_compat:original'])
 		expect(presetOptions('youtube')[0]!.label).toBe('Sin convertir · AAC ~128 kbps (256 con Premium)')

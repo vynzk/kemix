@@ -20,6 +20,8 @@ export function useLiveEvents(): SyncState {
 		const invalidatePlaylist = throttleByKey((id: number) => qc.invalidateQueries({ queryKey: ['playlist', id] }), 750)
 		// Each track downloaded from Soundeo uses one of the day's downloads: keep the counter in Cuentas current.
 		const invalidateSoundeo = throttle(() => qc.invalidateQueries({ queryKey: ['soundeo-status'] }), 2000)
+		// Una búsqueda en Soulseek trae resultados durante varios segundos: se relee a medida que llegan.
+		const invalidateSlskSearch = throttleByKey((id: string) => qc.invalidateQueries({ queryKey: ['slsk-search', id] }), 500)
 
 		source.onmessage = (msg) => {
 			const event = JSON.parse(msg.data) as KemixEvent
@@ -27,6 +29,10 @@ export function useLiveEvents(): SyncState {
 				case 'accounts':
 					qc.invalidateQueries({ queryKey: ['state'] })
 					qc.invalidateQueries({ queryKey: ['soundeo-status'] })
+					qc.invalidateQueries({ queryKey: ['soulseek-status'] })
+					break
+				case 'slsk-search':
+					invalidateSlskSearch(event.id)
 					break
 				case 'library':
 					invalidateLibrary()

@@ -222,6 +222,20 @@ export function scoreYouTube(
 	return Math.max(artistFirst, titleFirst)
 }
 
+/**
+ * Un archivo de Soulseek, con artista y título sacados de su ruta. La ruta suele decir "Artista - Título", pero a veces
+ * es "Título - Artista": se puntúan las dos lecturas, como un video de YouTube, y gana la que encaje.
+ */
+export function scoreSoulseek(
+	source: Pick<SourceTrack, 'title' | 'artists' | 'durationMs' | 'isrc'>,
+	candidate: TargetTrack
+): number {
+	const parsed = scoreMatch(source, candidate)
+	if (!candidate.artists.length) return parsed
+	const asWritten = { ...candidate, title: `${candidate.artists.join(', ')} - ${candidate.title}`, artists: [] }
+	return Math.max(parsed, scoreYouTube(source, asWritten))
+}
+
 /** What searches are built from: the main artist, the cleaned title and the bare song name. */
 export function queryParts(track: Pick<SourceTrack, 'title' | 'artists'>) {
 	const title = stripArtistPrefix(track.title, track.artists)

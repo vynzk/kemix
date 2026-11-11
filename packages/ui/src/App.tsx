@@ -10,8 +10,9 @@ import { ReviewPage } from './pages/ReviewPage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SearchPage } from './pages/SearchPage'
+import { SoulseekPage } from './pages/SoulseekPage'
 
-type Page = 'library' | 'search' | 'review' | 'downloads' | 'accounts' | 'settings'
+type Page = 'library' | 'search' | 'soulseek' | 'review' | 'downloads' | 'accounts' | 'settings'
 
 export function App() {
 	const sync = useLiveEvents()
@@ -21,6 +22,7 @@ export function App() {
 
 	const connected = state.data?.accounts.filter((a) => a.status === 'connected').length ?? 0
 	const accountErrors = state.data?.accounts.filter((a) => a.status === 'error').length ?? 0
+	const soulseek = state.data?.accounts.some((a) => a.service === 'soulseek' && a.status === 'connected') ?? false
 	const active = library.data?.playlists.reduce((n, p) => n + p.downloads.active, 0) ?? 0
 
 	const [page, setPage] = useState<Page | null>(null)
@@ -32,6 +34,8 @@ export function App() {
 	const nav: { id: Page; label: string; badge?: number; alert?: boolean }[] = [
 		{ id: 'library', label: 'Biblioteca' },
 		{ id: 'search', label: 'Buscar' },
+		// Solo con la cuenta conectada (o si se está en ella, p. ej. justo después de desconectarla).
+		...(soulseek || current === 'soulseek' ? [{ id: 'soulseek' as const, label: 'Soulseek' }] : []),
 		{ id: 'review', label: 'Revisión', badge: review.data?.length },
 		{ id: 'downloads', label: 'Descargas', badge: active || undefined },
 		{ id: 'accounts', label: 'Cuentas', alert: accountErrors > 0 },
@@ -86,6 +90,15 @@ export function App() {
 					)}
 					{current === 'search' && (
 						<SearchPage
+							onGoToAccounts={() => setPage('accounts')}
+							onOpenPlaylist={(id) => {
+								setOpenPlaylist({ id, nonce: Date.now() })
+								setPage('library')
+							}}
+						/>
+					)}
+					{current === 'soulseek' && (
+						<SoulseekPage
 							onGoToAccounts={() => setPage('accounts')}
 							onOpenPlaylist={(id) => {
 								setOpenPlaylist({ id, nonce: Date.now() })

@@ -71,7 +71,13 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		browserLogin: !!opts.browserLogin
 	}))
 
-	app.put('/api/settings', async (req) => kemix.settings.update(req.body as Partial<Settings>))
+	app.put('/api/settings', async (req) => {
+		const port = kemix.settings.get().soulseekPort
+		const next = kemix.settings.update(req.body as Partial<Settings>)
+		// Soulseek escucha en otro puerto: se vuelve a conectar escuchando en el nuevo.
+		if (next.soulseekPort !== port) kemix.accounts.soulseekPortChanged()
+		return next
+	})
 
 	// ---------- accounts ----------
 
@@ -140,6 +146,15 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		return kemix.accounts.connectSoundeo({ email: body.email, password: body.password })
 	})
 	app.get('/api/accounts/soundeo', async () => kemix.accounts.soundeoStatus())
+	// Soulseek tampoco tiene playlists que importar.
+	app.post('/api/accounts/soulseek', async (req) => {
+		const body = req.body as { username?: unknown; password?: unknown } | undefined
+		if (typeof body?.username !== 'string' || typeof body.password !== 'string') {
+			throw Object.assign(new Error('Faltan el usuario o la contraseña'), { statusCode: 400 })
+		}
+		return kemix.accounts.connectSoulseek({ username: body.username, password: body.password })
+	})
+	app.get('/api/accounts/soulseek', async () => kemix.accounts.soulseekStatus())
 	app.delete('/api/accounts/:service', async (req) => {
 		const s = (req.params as { service: string }).service
 		if (!isAccountService(s)) throw Object.assign(new Error('Servicio desconocido'), { statusCode: 404 })
@@ -164,6 +179,30 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		if (typeof query !== 'string') throw Object.assign(new Error('query inválida'), { statusCode: 400 })
 		return kemix.library.search(service(req.params), query)
 	})
+
+	// ---------- Soulseek: búsqueda libre ----------
+
+	// Los resultados llegan durante unos segundos: se empieza la búsqueda y se lee a medida que llegan eventos.
+	app.post('/api/soulseek/searches', async (req) => {
+		const query = (req.body as { query?: unknown } | undefined)?.query
+		if (typeof query !== 'string') throw Object.assign(new Error('query inválida'), { statusCode: 400 })
+		return kemix.soulseek.start(query)
+	})
+	app.get('/api/soulseek/searches/:searchId', async (req) =>
+		kemix.soulseek.get((req.params as { searchId: string }).searchId)
+	)
+	app.post('/api/soulseek/searches/:searchId/stop', async (req) => {
+		kemix.soulseek.stop((req.params as { searchId: string }).searchId)
+		return { ok: true }
+	})
+	app.post('/api/soulseek/download', async (req) => {
+		const body = req.body as { searchId?: unknown; username?: unknown; path?: unknown } | undefined
+		if (typeof body?.searchId !== 'string' || typeof body.username !== 'string' || typeof body.path !== 'string') {
+			throw Object.assign(new Error('Falta qué archivo bajar'), { statusCode: 400 })
+		}
+		return kemix.soulseek.download(body.searchId, body.username, body.path)
+	})
+
 	app.post('/api/playlists/create/:service', async (req) => {
 		const body = req.body as { name?: unknown; trackIds?: unknown } | undefined
 		const trackIds = body?.trackIds

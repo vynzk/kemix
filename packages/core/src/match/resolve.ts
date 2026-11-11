@@ -1,8 +1,8 @@
 import type { Downloader } from '../download/lucida-adapter'
-import type { DownloadService, MatchCandidate, MatchStatus, SourceService, SourceTrack, TargetService } from '../types'
+import type { DownloadService, MatchCandidate, MatchStatus, PlaylistSource, SourceTrack, TargetService } from '../types'
 import { DOWNLOAD_SERVICE_LABEL, isLossyService, isTargetService } from '../types'
 import { errorMessage } from '../util'
-import { scoreMatch, scoreYouTube, searchQueries } from './score'
+import { scoreMatch, scoreSoulseek, scoreYouTube, searchQueries } from './score'
 
 /**
  * A YouTube video or SoundCloud upload scoring at least this is taken as the song (titles there are noisier than on
@@ -27,6 +27,7 @@ export interface ResolveOptions {
 }
 
 export function scorerFor(service: DownloadService) {
+	if (service === 'soulseek') return scoreSoulseek
 	return isLossyService(service) ? scoreYouTube : scoreMatch
 }
 
@@ -71,7 +72,7 @@ export async function searchService(
  * Otherwise the candidates are left for manual review.
  */
 export async function resolveTrack(
-	track: SourceTrack & { source: SourceService },
+	track: SourceTrack & { source: PlaylistSource },
 	downloaders: Downloader[],
 	threshold: number,
 	opts: ResolveOptions = {}
