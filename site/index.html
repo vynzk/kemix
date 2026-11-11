@@ -4,7 +4,7 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Kemix · Tus playlists, sin pérdida</title>
-	<meta name="description" content="Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y las descarga en FLAC, AIFF o WAV, con carátula, clave y BPM. App de escritorio para Windows y Linux.">
+	<meta name="description" content="Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y las descarga en FLAC, AIFF o WAV desde Qobuz, Deezer, Soundeo o la red Soulseek, con carátula, clave y BPM. App de escritorio para Windows y Linux.">
 	<meta name="theme-color" content="#0d0e10">
 	<meta name="color-scheme" content="dark">
 	<link rel="canonical" href="https://vynzk.github.io/kemix/">
@@ -16,7 +16,7 @@
 	<meta property="og:locale" content="es_ES">
 	<meta property="og:url" content="https://vynzk.github.io/kemix/">
 	<meta property="og:title" content="Kemix · Tus playlists, sin pérdida">
-	<meta property="og:description" content="Trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y descárgalas en FLAC, AIFF o WAV, con clave y BPM.">
+	<meta property="og:description" content="Trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud y descárgalas en FLAC, AIFF o WAV, también desde Soulseek y las descargas gratis de SoundCloud, con clave y BPM.">
 	<meta property="og:image" content="https://vynzk.github.io/kemix/assets/og.jpg">
 	<meta property="og:image:type" content="image/jpeg">
 	<meta property="og:image:width" content="1200">
@@ -78,15 +78,16 @@
 	</div>
 
 	<div class="wrap hero-inner">
-		<a class="pill" href="#dj" style="--i:0">
-			<span class="pill-tag">v0.2.0</span>
-			<span>Nuevo: clave y BPM de cada tema</span>
+		<a class="pill" href="#soulseek" style="--i:0">
+			<span class="pill-tag">v0.3.0</span>
+			<span>Nuevo: Soulseek, Explorar y bajar desde Buscar</span>
 			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
 		</a>
 		<h1 class="hero-title" style="--i:1">Tus playlists,<br><span class="shine">sin pérdida.</span></h1>
 		<p class="hero-sub" style="--i:2">
-			Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud, encuentra cada tema y lo
-			descarga en FLAC hasta <span class="nw">24-bit/192&nbsp;kHz</span>, o en AIFF y WAV para mezclar. Con carátula, clave y BPM.
+			Kemix trae tus playlists de Spotify, YouTube Music, Qobuz, Deezer y SoundCloud, encuentra cada tema en Qobuz,
+			Deezer, Soundeo o la red Soulseek y lo descarga en FLAC hasta <span class="nw">24-bit/192&nbsp;kHz</span>, o en
+			AIFF y WAV para mezclar. Con carátula, clave y BPM.
 		</p>
 		<div class="cta-row" style="--i:3">
 			<a class="btn btn-primary btn-lg" data-dl="primary" href="https://github.com/vynzk/kemix/releases/latest">
@@ -99,7 +100,7 @@
 			</a>
 		</div>
 		<p class="hero-meta" style="--i:4">
-			<span>Windows y Linux</span><i></i><span data-version>v0.2.0</span><i></i><span>Nada más que instalar</span>
+			<span>Windows y Linux</span><i></i><span data-version>v0.3.0</span><i></i><span>Nada más que instalar</span>
 		</p>
 	</div>
 
@@ -267,7 +268,7 @@
 
 	<div class="wrap">
 		<dl class="stats" data-reveal>
-			<div><dt>6</dt><dd>servicios: Spotify, YouTube Music, Qobuz, Deezer, SoundCloud y Soundeo</dd></div>
+			<div><dt>7</dt><dd>servicios: Spotify, YouTube Music, Qobuz, Deezer, SoundCloud, Soundeo y Soulseek</dd></div>
 			<div><dt>24-bit<small>/192 kHz</small></dt><dd>FLAC Hi-Res desde Qobuz, o AIFF y WAV para DJ</dd></div>
 			<div><dt>90<small>%</small></dt><dd>de coincidencia para bajar sin preguntarte. Lo demás, a Revisión</dd></div>
 			<div><dt>0</dt><dd>programas extra: yt-dlp y ffmpeg se bajan solos, verificados</dd></div>
@@ -310,7 +311,8 @@
 					<li class="chip" style="--c:#4b8bf5"><i></i>Qobuz<small>FLAC hasta 24-bit/192 kHz</small></li>
 					<li class="chip" style="--c:#a238ff"><i></i>Deezer<small>FLAC 16-bit/44.1 kHz</small></li>
 					<li class="chip" style="--c:#f5a623"><i></i>Soundeo<small>WAV · AIFF · MP3 320</small></li>
-					<li class="chip" style="--c:#ff5500"><i></i>SoundCloud<small>Respaldo · original o AAC</small></li>
+					<li class="chip" style="--c:#14b8a6"><i></i>Soulseek<small>P2P · FLAC, WAV o MP3</small></li>
+					<li class="chip" style="--c:#ff5500"><i></i>SoundCloud<small>Descargas gratis · original o AAC</small></li>
 					<li class="chip" style="--c:#ff3b30"><i></i>YouTube<small>Respaldo · AAC</small></li>
 				</ul>
 			</div>
@@ -564,14 +566,83 @@
 
 			<article class="card" data-reveal>
 				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></div>
-				<h3>Busca y crea playlists</h3>
-				<p>Busca en cualquier servicio conectado, arma una playlist con orden y Kemix la crea como privada en tu cuenta.</p>
+				<h3>Busca, baja y crea playlists</h3>
+				<p>Busca en cualquier servicio conectado y baja lo que encuentres, o arma una playlist con orden y Kemix la crea como privada en tu cuenta.</p>
 			</article>
 
 			<article class="card" data-reveal>
 				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="m5.6 5.6 3.6 3.6m5.6 5.6 3.6 3.6m0-12.8-3.6 3.6m-5.6 5.6-3.6 3.6"/></svg></div>
 				<h3>Respaldo de YouTube y SoundCloud</h3>
 				<p>Para remixes, sets y artistas independientes que no están en Qobuz ni Deezer. Solo si lo pides, y avisando la calidad.</p>
+			</article>
+
+			<article class="card b-wide" id="soulseek" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.3 8.2l3.4 7.6M16.7 8.2l-3.4 7.6"/></svg></div>
+				<h3>Soulseek, para lo que no está en las tiendas</h3>
+				<p>Edits, rarezas y FLAC sacados de CD que comparten otros usuarios. Kemix lo usa cuando Qobuz, Deezer y Soundeo no tienen el tema, y tiene su pestaña en Buscar para bajar lo que quieras.</p>
+				<div class="review" aria-hidden="true">
+					<div class="rv-orig">
+						<span class="rv-k">Buscar en Soulseek</span>
+						<p><b>kasia dunmore radio seraphim</b> · 37 archivos de audio</p>
+					</div>
+					<div class="rv-opt slsk">
+						<span class="dot" style="--c:#14b8a6"></span>
+						<p><b>04 - Radio Seraphim (Extended Mix).flac</b><small>vinylbird · Kasia Dunmore - Night Signals (2021) [FLAC]</small></p>
+						<span class="rv-feat"><span class="t-emerald">FLAC 16-bit/44.1 kHz</span></span>
+						<span class="rv-pct">Puede enviarlo ya</span>
+						<span class="rv-use pri">Descargar</span>
+					</div>
+					<div class="rv-opt slsk">
+						<span class="dot" style="--c:#14b8a6"></span>
+						<p><b>Kasia Dunmore - Radio Seraphim (Extended Mix).mp3</b><small>deepcrate · Sueltos</small></p>
+						<span class="rv-feat"><span class="t-amber">MP3 320 kbps</span></span>
+						<span class="rv-pct">3 en su cola</span>
+						<span class="rv-use">Descargar</span>
+					</div>
+				</div>
+			</article>
+
+			<article class="card b-wide" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg></div>
+				<h3>Explora por géneros</h3>
+				<p>Temas de SoundCloud que se bajan gratis, de House a Dembow. Escúchalos, abre su descarga o bájalos con Kemix: el archivo que subió el artista, a su propia playlist.</p>
+				<div class="tags" aria-hidden="true">
+					<span>Afro House</span><span>Techno</span><span>Drum &amp; Bass</span><span>Reggaeton</span><span>Lo-fi</span>
+				</div>
+				<div class="review" aria-hidden="true">
+					<div class="rv-opt">
+						<span class="playbtn">▶</span>
+						<span class="dot" style="--c:#ff5500"></span>
+						<p><b>Saltwater Static (Free DL)</b><small>Mira Okafor · SoundCloud · 6:42</small></p>
+						<span class="rv-feat">Afro House</span>
+						<span class="rv-pct"><span class="t-emerald">⬇ Descarga gratis</span></span>
+						<span class="rv-use pri">Bajar con Kemix</span>
+					</div>
+				</div>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></div>
+				<h3>Si uno no lo envía, otro sí</h3>
+				<p>En Soulseek elige el mejor archivo por calidad, cola y velocidad. Si ese usuario lo rechaza o tarda, lo pide a otro que tenga el mismo archivo.</p>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg></div>
+				<h3>Descargas gratis de SoundCloud</h3>
+				<p>Los temas que se bajan gratis llevan su botón, en Buscar, Revisión y tus playlists. Sin una calidad inventada: se sabe al bajarlo.</p>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m20 20-5.5-5.5"/><path d="M10 7v6m0 0-2.5-2.5M10 13l2.5-2.5"/></svg></div>
+				<h3>Baja desde Buscar</h3>
+				<p>Un tema suelto se baja como una playlist: el mismo matching, la calidad y el formato que elijas, y lo dudoso a Revisión.</p>
+			</article>
+
+			<article class="card" data-reveal>
+				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0-4 4m4-4 4 4"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/><path d="m3 3 18 18"/></svg></div>
+				<h3>Solo descarga</h3>
+				<p>Kemix habla Soulseek por su cuenta, sin programas aparte, y no comparte nada de tu PC. Abre su puerto en el router para llegar a más usuarios.</p>
 			</article>
 
 			<article class="card b-wide b-privacy" data-reveal>
@@ -647,7 +718,7 @@
 		<div class="section-head center" data-reveal>
 			<p class="eyebrow">Descargar</p>
 			<h2 class="h2">Descarga Kemix.</h2>
-			<p class="lead">Versión <span data-version>v0.2.0</span> para Windows y Linux. Trae todo lo que necesita: no hace falta instalar Node, Python ni nada más.</p>
+			<p class="lead">Versión <span data-version>v0.3.0</span> para Windows y Linux. Trae todo lo que necesita: no hace falta instalar Node, Python ni nada más.</p>
 		</div>
 
 		<div class="dl-grid">
@@ -672,7 +743,7 @@
 					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
 					Descargar AppImage
 				</a>
-				<div class="cmd"><code>chmod +x <span class="nw" data-file="appimage">Kemix-0.2.0-x86_64.AppImage</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+				<div class="cmd"><code>chmod +x <span class="nw" data-file="appimage">Kemix-0.3.0-x86_64.AppImage</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
 			</article>
 
 			<article class="card dl" data-os="linux" data-reveal>
@@ -684,7 +755,7 @@
 					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
 					Descargar .deb
 				</a>
-				<div class="cmd"><code>sudo apt install <span class="nw" data-file="deb">./Kemix-0.2.0-amd64.deb</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+				<div class="cmd"><code>sudo apt install <span class="nw" data-file="deb">./Kemix-0.3.0-amd64.deb</span></code><button class="copy" type="button" aria-label="Copiar comando"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
 			</article>
 		</div>
 
@@ -710,7 +781,7 @@
 			</details>
 			<details name="faq">
 				<summary>¿Qué cuenta necesito para bajar en FLAC?</summary>
-				<p>Una de Qobuz o de Deezer. Kemix solo te ofrece las calidades que da tu cuenta: Qobuz llega hasta 24-bit/192&nbsp;kHz y el FLAC de Deezer es 16-bit/44.1&nbsp;kHz. Para WAV y AIFF también sirve Soundeo con una cuenta Premium.</p>
+				<p>Una de Qobuz o de Deezer. Kemix solo te ofrece las calidades que da tu cuenta: Qobuz llega hasta 24-bit/192&nbsp;kHz y el FLAC de Deezer es 16-bit/44.1&nbsp;kHz. Para WAV y AIFF también sirve Soundeo con una cuenta Premium. Gratis, Soulseek y las descargas gratis de SoundCloud suelen tener FLAC o WAV, aunque la calidad depende de cada archivo.</p>
 			</details>
 			<details name="faq">
 				<summary>¿Tengo que instalar algo más?</summary>
@@ -722,11 +793,19 @@
 			</details>
 			<details name="faq">
 				<summary>¿Qué pasa con los temas que no encuentra?</summary>
-				<p>Los que no superan el 90% de coincidencia van a Revisión, con sus opciones, para que elijas tú. Los que no están en Qobuz ni Deezer se pueden bajar de YouTube o SoundCloud, solo si lo pides y con aviso de que no es calidad máxima.</p>
+				<p>Los que no superan el 90% de coincidencia van a Revisión, con sus opciones, para que elijas tú. Los que no están en Qobuz ni Deezer se buscan en Soulseek si lo conectaste, y se pueden bajar de YouTube o SoundCloud, solo si lo pides y con aviso de la calidad.</p>
 			</details>
 			<details name="faq">
 				<summary>¿Es una app oficial de estos servicios?</summary>
-				<p>No. Kemix no está afiliado a ninguno, y sus integraciones con YouTube Music, Spotify o Soundeo no son oficiales: pueden dejar de funcionar si cambian sus webs. Descargar desde estos servicios va contra sus términos de uso; Kemix es para uso personal.</p>
+				<p>No. Kemix no está afiliado a ninguno, y sus integraciones con YouTube Music, Spotify, Soundeo o Soulseek no son oficiales: pueden dejar de funcionar si cambian. Descargar desde estos servicios va contra sus términos de uso; Kemix es para uso personal.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Kemix comparte mis archivos en Soulseek?</summary>
+				<p>No. Solo busca y descarga: anuncia 0 archivos compartidos y rechaza lo que le piden. Algunos usuarios no dejan bajar a quien no comparte; entonces Kemix prueba con otro que tenga el mismo archivo. Abrir el puerto de Soulseek en tu router ayuda a llegar a más usuarios.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Qué temas de SoundCloud se pueden bajar gratis?</summary>
+				<p>Los que el artista deja descargar desde SoundCloud, que Kemix baja con su archivo original, y los que tienen un enlace de descarga gratis (Hypeddit, Dropbox…), que se abren en el navegador porque suelen pedir seguir al artista o un email. En Explorar ves solo esos, por género.</p>
 			</details>
 		</div>
 	</div>
@@ -739,7 +818,7 @@
 			<div class="final-rings" aria-hidden="true"></div>
 			<img class="final-logo" src="assets/logo.svg" alt="" width="72" height="72">
 			<h2>Tus playlists,<br>sin pérdida.</h2>
-			<p>Kemix <span data-version>v0.2.0</span> para Windows y Linux.</p>
+			<p>Kemix <span data-version>v0.3.0</span> para Windows y Linux.</p>
 			<div class="cta-row">
 				<a class="btn btn-dark btn-lg" href="#descargar">
 					<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
@@ -769,7 +848,7 @@
 			<a href="https://github.com/vynzk/kemix/blob/main/COMPILAR.md">Compilar</a>
 		</nav>
 		<p class="footer-legal">
-			Kemix no está afiliado a Spotify, YouTube, Qobuz, Deezer, SoundCloud ni Soundeo; sus nombres son marcas de sus
+			Kemix no está afiliado a Spotify, YouTube, Qobuz, Deezer, SoundCloud, Soundeo ni Soulseek; sus nombres son marcas de sus
 			dueños. Descargar desde estos servicios va contra sus términos de uso: Kemix es para uso personal.
 		</p>
 	</div>

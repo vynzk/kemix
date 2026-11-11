@@ -2166,9 +2166,19 @@ code {
 	border-radius: 50%;
 	background: var(--c);
 }
+/* Resultados de Soulseek: sin ▶ (no hay vista previa), así que una columna menos. */
+.rv-opt.slsk {
+	grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+.card .tags {
+	margin-top: 20px;
+}
 @media (max-width: 560px) {
 	.rv-opt {
 		grid-template-columns: auto minmax(0, 1fr) auto;
+	}
+	.rv-opt.slsk {
+		grid-template-columns: minmax(0, 1fr) auto;
 	}
 	.rv-opt .dot,
 	.rv-opt .rv-feat,
