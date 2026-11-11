@@ -10,8 +10,9 @@ import { ReviewPage } from './pages/ReviewPage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SearchPage } from './pages/SearchPage'
+import { ExplorePage } from './pages/ExplorePage'
 
-type Page = 'library' | 'search' | 'review' | 'downloads' | 'accounts' | 'settings'
+type Page = 'library' | 'search' | 'explore' | 'review' | 'downloads' | 'accounts' | 'settings'
 
 export function App() {
 	const sync = useLiveEvents()
@@ -32,6 +33,7 @@ export function App() {
 	const nav: { id: Page; label: string; badge?: number; alert?: boolean }[] = [
 		{ id: 'library', label: 'Biblioteca' },
 		{ id: 'search', label: 'Buscar' },
+		{ id: 'explore', label: 'Explorar' },
 		{ id: 'review', label: 'Revisión', badge: review.data?.length },
 		{ id: 'downloads', label: 'Descargas', badge: active || undefined },
 		{ id: 'accounts', label: 'Cuentas', alert: accountErrors > 0 },
@@ -87,6 +89,14 @@ export function App() {
 					{current === 'search' && (
 						<SearchPage
 							onGoToAccounts={() => setPage('accounts')}
+							onOpenPlaylist={(id) => {
+								setOpenPlaylist({ id, nonce: Date.now() })
+								setPage('library')
+							}}
+						/>
+					)}
+					{current === 'explore' && (
+						<ExplorePage
 							onOpenPlaylist={(id) => {
 								setOpenPlaylist({ id, nonce: Date.now() })
 								setPage('library')

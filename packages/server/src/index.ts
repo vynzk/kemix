@@ -11,7 +11,14 @@ import type {
 	SourceTrack,
 	SpotifyWebLogin
 } from '@kemix/core'
-import { SOURCE_SERVICES, isAccountService, isDownloadService, isOutputFormat, isQualityLevel } from '@kemix/core'
+import {
+	SOURCE_SERVICES,
+	isAccountService,
+	isDownloadService,
+	isExploreCreated,
+	isOutputFormat,
+	isQualityLevel
+} from '@kemix/core'
 
 export interface ServerOptions {
 	kemix: Kemix
@@ -228,6 +235,25 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		}
 		const o = downloadOptions(req.body)
 		return kemix.soulseek.download(body.searchId, body.username, body.path, o.level, o.format)
+	})
+
+	// ---------- Explorar (SoundCloud, solo descargables) ----------
+
+	app.get('/api/soundcloud/explore', async (req) => {
+		const q = req.query as { genre?: string; q?: string; created?: string; cursor?: string }
+		return kemix.explore.explore({
+			genre: q.genre,
+			query: q.q,
+			created: isExploreCreated(q.created) ? q.created : null,
+			cursor: q.cursor
+		})
+	})
+	/** Baja un tema de Explorar a «SoundCloud gratis», en la calidad y el formato elegidos. */
+	app.post('/api/soundcloud/download', async (req) => {
+		const id = (req.body as { id?: unknown } | undefined)?.id
+		if (typeof id !== 'string' || !/^\d+$/.test(id)) throw Object.assign(new Error('Tema inválido'), { statusCode: 400 })
+		const o = downloadOptions(req.body)
+		return kemix.explore.download(id, o.level, o.format)
 	})
 
 	app.post('/api/playlists/create/:service', async (req) => {

@@ -241,6 +241,25 @@ export interface SlskFile {
 	queueLength: number
 }
 
+/** Un tema de Explorar: de SoundCloud, siempre con descarga gratis. */
+export type ExploreTrack = SourceTrack & { freeDownload: FreeDownload; genre?: string }
+
+/** Una tanda de Explorar: los temas con descarga gratis que se encontraron revisando `scanned` resultados. */
+export interface ExplorePage {
+	tracks: ExploreTrack[]
+	/** Para «Cargar más» (la siguiente página de SoundCloud); null: no hay más. */
+	next: string | null
+	scanned: number
+}
+
+/** Filtro de fecha de publicación de Explorar. */
+export type ExploreCreated = 'last_week' | 'last_month' | 'last_year'
+export const EXPLORE_CREATED: ExploreCreated[] = ['last_week', 'last_month', 'last_year']
+
+export function isExploreCreated(s: unknown): s is ExploreCreated {
+	return typeof s === 'string' && (EXPLORE_CREATED as string[]).includes(s)
+}
+
 /** Una búsqueda libre en Soulseek: los resultados llegan durante unos segundos, de cada usuario por separado. */
 export interface SlskSearch {
 	id: string

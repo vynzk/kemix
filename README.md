@@ -140,6 +140,14 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
 
   Por eso SoundCloud ya no figura como «con pérdida» a secas, sino «con pérdida salvo descargas gratis». yt-dlp no
   trae el botón de compra: Kemix lo consulta en la API pública de SoundCloud (sin cuenta) para cada búsqueda.
+- **Explorar**: temas de SoundCloud que se bajan gratis, por género. No necesita cuenta.
+  - Eliges un género (House, Afro House, Techno, Drum & Bass, Reggaeton…) o escribes cualquier tag, con un texto y
+    una fecha de publicación opcionales.
+  - La API de SoundCloud no filtra por descargables, así que Kemix revisa páginas de resultados (hasta 300 temas por
+    tanda) y muestra solo los que tienen descarga gratis. «Cargar más» sigue donde quedó.
+  - En cada tema: ▶ con el reproductor de SoundCloud, «⬇ Descarga gratis ↗» y «Bajar con Kemix». Este último solo
+    está en los que SoundCloud deja descargar: baja el archivo que subió el artista a la playlist **SoundCloud
+    gratis**, con la calidad y el formato elegidos (AIFF y WAV se convierten como siempre).
 - **Cuenta de SoundCloud (opcional)**: se conecta iniciando sesión en una ventana (app de escritorio) o con las
   cookies de soundcloud.com; Kemix guarda solo la cookie `oauth_token`, cifrada. Con ella importa tus playlists, las
   que te gustaron y tus Me gusta (vía `api-v2.soundcloud.com`, con el client id público del reproductor web, igual

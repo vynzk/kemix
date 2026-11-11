@@ -4,6 +4,8 @@ import type {
 	AudioQuality,
 	DownloadRow,
 	DownloadService,
+	ExploreCreated,
+	ExplorePage,
 	Folder,
 	MatchCandidate,
 	OutputFormat,
@@ -140,6 +142,16 @@ export const api = {
 	 */
 	downloadFromSearch: (service: SourceService, tracks: SourceTrack[], opts: Omit<DownloadOptions, 'positions'> = {}) =>
 		request<{ playlistId: number }>('POST', '/api/search/download', { service, tracks, ...opts }),
+
+	/** Temas de SoundCloud con descarga gratis, por género o tag; `cursor`: el `next` de la tanda anterior. */
+	explore: (p: { genre?: string; q?: string; created?: ExploreCreated | null; cursor?: string | null }) => {
+		const params = new URLSearchParams()
+		for (const [k, v] of Object.entries(p)) if (v) params.set(k, v)
+		return request<ExplorePage>('GET', `/api/soundcloud/explore?${params}`)
+	},
+	/** Baja un tema de Explorar a «SoundCloud gratis». */
+	exploreDownload: (id: string, opts: Omit<DownloadOptions, 'positions' | 'provider'> = {}) =>
+		request<{ playlistId: number }>('POST', '/api/soundcloud/download', { id, ...opts }),
 
 	createFolder: (name: string, parentId: number | null) => request<Folder>('POST', '/api/folders', { name, parentId }),
 	updateFolder: (id: number, patch: { name?: string; parentId?: number | null }) =>

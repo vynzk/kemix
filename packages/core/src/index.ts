@@ -11,6 +11,7 @@ import { Ffmpeg, ManagedFfmpeg, type AudioConverter, type AudioDecoder } from '.
 import { FeatureAnalyzer } from './features/analyzer'
 import type { FeatureSources } from './features/lookup'
 import { SoulseekSearches } from './soulseek-search'
+import { SoundCloudExplore } from './soundcloud-explore'
 import type { SlskClientOptions } from './sources/soulseek-client'
 
 export * from './types'
@@ -23,6 +24,7 @@ export type { DownloadQueue } from './download/queue'
 export type { AudioConverter, AudioDecoder, Mp3Converter, PcmFormat } from './download/ffmpeg'
 export type { FeatureAnalyzer } from './features/analyzer'
 export type { SoulseekSearches } from './soulseek-search'
+export type { SoundCloudExplore } from './soundcloud-explore'
 export { FeatureSources } from './features/lookup'
 export type { YtMusicAccount } from './sources/ytmusic'
 
@@ -55,6 +57,8 @@ export class Kemix {
 	readonly features: FeatureAnalyzer
 	/** Búsquedas libres en Soulseek y descargas de archivos sueltos. */
 	readonly soulseek: SoulseekSearches
+	/** Explorar: temas de SoundCloud con descarga gratis, por género. */
+	readonly explore: SoundCloudExplore
 
 	constructor(opts: KemixOptions) {
 		fs.mkdirSync(opts.dataDir, { recursive: true })
@@ -84,6 +88,7 @@ export class Kemix {
 			(trackId) => this.features.trackDownloaded(trackId)
 		)
 		this.soulseek = new SoulseekSearches(this.accounts, this.queue, this.settings, this.events)
+		this.explore = new SoundCloudExplore(this.queue)
 	}
 
 	start() {
