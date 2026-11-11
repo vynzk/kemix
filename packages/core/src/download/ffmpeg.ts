@@ -186,8 +186,102 @@ export function pcmDecodeArgs(input: string, sampleRate: number, maxSeconds?: nu
 	]
 }
 
+/** Audio decodificado tal cual, para el espectro: su frecuencia de muestreo, sus canales y las muestras por partes. */
+export interface RawAudio {
+	sampleRate: number
+	channels: number
+	/** Muestras enteras de 32 bits con signo, intercaladas por canal. Cada parte trae cuadros completos. */
+	chunks: AsyncIterable<Int32Array>
+}
+
+/** Decodifica audio sin remuestrear ni mezclar canales, para ver su espectro y cuántos bits usa de verdad. */
+export interface RawDecoder {
+	decodeRaw(input: string, opts?: { signal?: AbortSignal }): Promise<RawAudio>
+}
+
+/**
+ * Argumentos para decodificar `input` a un WAV de enteros de 32 bits por stdout, con su frecuencia de muestreo y sus
+ * canales. Los 16 o 24 bits del original quedan arriba de cada muestra: los de abajo en cero dicen cuántos usa.
+ */
+export function rawDecodeArgs(input: string): string[] {
+	return [
+		'-hide_banner',
+		'-nostdin',
+		'-loglevel', 'error',
+		'-i', input,
+		'-map', '0:a:0',
+		'-vn',
+		'-map_metadata', '-1',
+		'-c:a', 'pcm_s32le',
+		'-f', 'wav',
+		'pipe:1'
+	]
+}
+
+/**
+ * Lee un WAV de enteros de 32 bits que llega por partes (la salida de ffmpeg): primero el formato de la cabecera y
+ * después las muestras. El tamaño de los datos no se mira: por un pipe, ffmpeg no puede volver a escribirlo.
+ */
+export async function readWavStream(bytes: AsyncIterable<Buffer>): Promise<RawAudio> {
+	const it = bytes[Symbol.asyncIterator]()
+	let buf: Buffer = Buffer.alloc(0)
+	const need = async (n: number) => {
+		while (buf.length < n) {
+			const r = await it.next()
+			if (r.done) throw new Error('No se pudo leer el audio: el archivo está vacío o no es audio')
+			buf = Buffer.concat([buf, r.value])
+		}
+	}
+	await need(12)
+	if (buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') {
+		throw new Error('No se pudo leer el audio: ffmpeg no devolvió un WAV')
+	}
+	let at = 12
+	let fmt: { channels: number; sampleRate: number; bits: number } | null = null
+	for (;;) {
+		await need(at + 8)
+		const id = buf.toString('latin1', at, at + 4)
+		const size = buf.readUInt32LE(at + 4)
+		if (id === 'data') {
+			at += 8
+			break
+		}
+		await need(at + 8 + size)
+		if (id === 'fmt ') {
+			fmt = { channels: buf.readUInt16LE(at + 10), sampleRate: buf.readUInt32LE(at + 12), bits: buf.readUInt16LE(at + 22) }
+		}
+		// Los bloques de tamaño impar llevan un byte de relleno.
+		at += 8 + size + (size & 1)
+	}
+	if (fmt?.bits !== 32 || !fmt.channels || !fmt.sampleRate) {
+		throw new Error('No se pudo leer el audio: formato inesperado')
+	}
+	const frame = fmt.channels * 4
+	let rest: Buffer = buf.subarray(at)
+	async function* chunks(): AsyncGenerator<Int32Array> {
+		try {
+			for (;;) {
+				const usable = rest.length - (rest.length % frame)
+				if (usable > 0) {
+					// Copia alineada: un Buffer puede empezar en cualquier byte de otro más grande.
+					const samples = new Int32Array(usable / 4)
+					new Uint8Array(samples.buffer).set(rest.subarray(0, usable))
+					rest = rest.subarray(usable)
+					yield samples
+				}
+				const r = await it.next()
+				if (r.done) return
+				rest = rest.length ? Buffer.concat([rest, r.value]) : r.value
+			}
+		} finally {
+			await it.return?.()
+		}
+	}
+	return { sampleRate: fmt.sampleRate, channels: fmt.channels, chunks: chunks() }
+}
+
 /** ffmpeg: Kemix's own copy (downloaded on first use), else one on the PATH. */
-export class Ffmpeg implements AudioConverter, AudioDecoder {
+export class Ffmpeg implements AudioConverter, AudioDecoder, RawDecoder {
 	#bin?: Promise<string>
 
 	constructor(private managed?: ManagedFfmpeg) {}
@@ -205,7 +299,7 @@ export class Ffmpeg implements AudioConverter, AudioDecoder {
 		}
 		if (await runs('ffmpeg')) return 'ffmpeg'
 		throw new Error(
-			`${managedError}Para convertir a MP3, AIFF o WAV, y para analizar la clave y el BPM, Kemix baja ffmpeg la ` +
+			`${managedError}Para convertir a MP3, AIFF o WAV, para analizar la clave y el BPM y para ver el espectro, Kemix baja ffmpeg la ` +
 				'primera vez (hace falta conexión a ' +
 				'internet). Si no puede, instala ffmpeg en el sistema (https://ffmpeg.org).'
 		)
@@ -256,6 +350,32 @@ export class Ffmpeg implements AudioConverter, AudioDecoder {
 		const samples = new Float32Array(Math.floor(bytes.length / 4))
 		new Uint8Array(samples.buffer).set(bytes.subarray(0, samples.length * 4))
 		return samples
+	}
+
+	async decodeRaw(input: string, opts: { signal?: AbortSignal } = {}): Promise<RawAudio> {
+		const bin = await this.bin()
+		opts.signal?.throwIfAborted()
+		const child = spawn(bin, rawDecodeArgs(input), { windowsHide: true, signal: opts.signal })
+		let stderr = ''
+		child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)))
+		const exit = new Promise<void>((resolve, reject) => {
+			child.on('error', reject)
+			child.on('close', (code) => {
+				if (code === 0) resolve()
+				else reject(new Error(`No se pudo leer el audio: ${stderr.trim().split('\n').pop() || `código ${code}`}`))
+			})
+		})
+		// Si quien lee se detiene antes, nadie espera la salida: que no quede un rechazo sin atender.
+		exit.catch(() => {})
+		async function* output(): AsyncGenerator<Buffer> {
+			try {
+				yield* child.stdout as AsyncIterable<Buffer>
+				await exit
+			} finally {
+				if (child.exitCode === null) child.kill()
+			}
+		}
+		return readWavStream(output())
 	}
 
 	async #run(args: string[], target: string, signal?: AbortSignal) {

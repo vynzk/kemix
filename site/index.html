@@ -80,7 +80,7 @@
 	<div class="wrap hero-inner">
 		<a class="pill" href="#soulseek" style="--i:0">
 			<span class="pill-tag">v0.3.0</span>
-			<span>Nuevo: Soulseek, Explorar y bajar desde Buscar</span>
+			<span>Nuevo: Soulseek, Explorar, Espectro y bajar desde Buscar</span>
 			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
 		</a>
 		<h1 class="hero-title" style="--i:1">Tus playlists,<br><span class="shine">sin pérdida.</span></h1>
@@ -621,6 +621,24 @@
 				</div>
 			</article>
 
+			<article class="card b-full b-spectrum" id="espectro" data-reveal>
+				<div class="spectrum-text">
+					<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2M7 7v10M11 4v16M15 8v8M19 10v4M21 12h0"/></svg></div>
+					<h3>¿Es de verdad sin pérdida? Míralo en su espectro</h3>
+					<p>Un WAV que bajaste de cualquier lado puede ser un MP3 de 128 disfrazado. Arrastra el archivo a Espectro, o pulsa «Espectro» en un tema bajado, y Kemix te muestra hasta dónde llegan sus agudos y si su calidad es la que dice: también pilla un «96 kHz» remuestreado desde un CD y un «24 bits» con relleno.</p>
+				</div>
+				<div class="spectra" aria-hidden="true">
+					<figure class="spec">
+						<div class="spec-plot"></div>
+						<figcaption><span class="t-emerald">✓ Parece sin pérdida de verdad</span><small>FLAC · audio hasta 22 kHz</small></figcaption>
+					</figure>
+					<figure class="spec">
+						<div class="spec-plot fake"><span class="spec-cut" style="--at:25%"><i>Corte · 16,5 kHz</i></span></div>
+						<figcaption><span class="t-red">✕ Probablemente viene de un MP3</span><small>WAV · se corta de golpe como un MP3 de 128</small></figcaption>
+					</figure>
+				</div>
+			</article>
+
 			<article class="card" data-reveal>
 				<div class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></div>
 				<h3>Si uno no lo envía, otro sí</h3>
@@ -785,7 +803,7 @@
 			</details>
 			<details name="faq">
 				<summary>¿Tengo que instalar algo más?</summary>
-				<p>No. El ejecutable trae todo: Electron, SQLite y la interfaz. yt-dlp (para YouTube y SoundCloud) y ffmpeg (para convertir a AIFF, WAV o MP3) se bajan solos de sus releases oficiales la primera vez que hacen falta, y se verifican con SHA-256.</p>
+				<p>No. El ejecutable trae todo: Electron, SQLite y la interfaz. yt-dlp (para YouTube y SoundCloud) y ffmpeg (para convertir a AIFF, WAV o MP3, analizar la clave y el BPM, y el Espectro) se bajan solos de sus releases oficiales la primera vez que hacen falta, y se verifican con SHA-256.</p>
 			</details>
 			<details name="faq">
 				<summary>¿Dónde quedan mis datos y mis contraseñas?</summary>
@@ -806,6 +824,10 @@
 			<details name="faq">
 				<summary>¿Qué temas de SoundCloud se pueden bajar gratis?</summary>
 				<p>Los que el artista deja descargar desde SoundCloud, que Kemix baja con su archivo original, y los que tienen un enlace de descarga gratis (Hypeddit, Dropbox…), que se abren en el navegador porque suelen pedir seguir al artista o un email. En Explorar ves solo esos, por género.</p>
+			</details>
+			<details name="faq">
+				<summary>¿Cómo sé si un WAV o FLAC es de verdad sin pérdida?</summary>
+				<p>Ábrelo en Espectro. Un MP3 tira los agudos con un filtro (uno de 128 kbps no tiene nada sobre unos 16 kHz, uno de 320 sobre 20 kHz) y pasarlo a WAV no los devuelve: se ve un corte recto. Kemix lo mide y te dice a qué se parece. Es una pista, no una prueba: algunos másters se cortan a propósito y algunos AAC de bitrate alto no cortan nada.</p>
 			</details>
 		</div>
 	</div>

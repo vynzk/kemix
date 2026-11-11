@@ -451,6 +451,45 @@ export interface ScanState {
 	error: string | null
 }
 
+/**
+ * Qué tan creíble es la calidad que dice un archivo, según su espectro: `ok` (coincide), `doubt` (puede que no; hay
+ * que mirarlo), `fake` (casi seguro que no: un WAV hecho desde un MP3, un 96 kHz remuestreado…) o `unknown`.
+ */
+export type SpectrumLevel = 'ok' | 'doubt' | 'fake' | 'unknown'
+
+export interface SpectrumVerdict {
+	level: SpectrumLevel
+	/** Frase corta: «Parece sin pérdida de verdad», «Probablemente viene de un MP3». */
+	title: string
+	/** Por qué, en frases. */
+	details: string[]
+}
+
+/** El espectro de un archivo de audio y lo que dice de su calidad real. */
+export interface SpectrumAnalysis {
+	/** Nombre del archivo. */
+	name: string
+	/** Lo que dice el archivo de sí mismo (formato, bits, frecuencia, bitrate); null si no se pudo leer. */
+	declared: AudioQuality | null
+	sampleRateHz: number
+	channels: number
+	durationMs: number
+	/**
+	 * Espectrograma: `columns` columnas de izquierda a derecha (el tiempo), cada una con `rows` niveles de grave a agudo
+	 * (de 0 Hz a la mitad de la frecuencia de muestreo), de 0 a 255 entre `minDb` y `maxDb`. En base64.
+	 */
+	spectrogram: { columns: number; rows: number; minDb: number; maxDb: number; data: string }
+	/** Nivel medio de cada fila del espectrograma en todo el tema, en dB. */
+	average: number[]
+	/** Hasta qué frecuencia hay audio de verdad, en Hz; null si no se pudo medir (silencio, muy corto). */
+	cutoffHz: number | null
+	/** Si ahí el audio se corta de golpe (el filtro de un códec con pérdida o de un remuestreo) o baja de a poco. */
+	sharpCutoff: boolean
+	/** Bits que usan de verdad las muestras (los de abajo en cero no cuentan); null si no aplica (formatos con pérdida). */
+	usedBits: number | null
+	verdict: SpectrumVerdict
+}
+
 export type KemixEvent =
 	| { type: 'scan'; scan: ScanState }
 	/** Progress of a playlist's key and BPM lookup (same shape as the quality scan). */

@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { Readable } from 'node:stream'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import type {
@@ -52,6 +53,9 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		if (PUBLIC_ROUTES.has(req.url.split('?')[0]!)) return
 		if (req.headers['x-kemix-token'] !== opts.token) return reply.code(401).send({ error: 'No autorizado' })
 	})
+
+	// Archivos que se suben tal cual (el Espectro): el cuerpo llega como stream, sin leerlo entero en memoria.
+	app.addContentTypeParser('application/octet-stream', (_req, payload, done) => done(null, payload))
 
 	app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
 		const status = err.statusCode && err.statusCode < 500 ? err.statusCode : 400
@@ -449,6 +453,20 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 		await kemix.queue.remove(id(req.params))
 		return { ok: true }
 	})
+
+	// ---------- Espectro ----------
+
+	/** Un archivo del equipo del usuario, subido tal cual; `name`: su nombre (de su extensión sale el formato). */
+	app.post('/api/spectrum/file', async (req) => {
+		const name = (req.query as { name?: string }).name
+		if (!name) throw Object.assign(new Error('Falta el nombre del archivo'), { statusCode: 400 })
+		if (!(req.body instanceof Readable)) {
+			throw Object.assign(new Error('Sube el archivo como application/octet-stream'), { statusCode: 415 })
+		}
+		return kemix.spectrum.analyzeUpload(req.body, name)
+	})
+	/** El archivo de una descarga terminada. */
+	app.post('/api/downloads/:id/spectrum', async (req) => kemix.spectrum.analyzeDownload(id(req.params)))
 
 	// ---------- live events (SSE) ----------
 

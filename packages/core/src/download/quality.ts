@@ -31,6 +31,11 @@ export function codecFor(ext: string, description = ''): AudioQuality['codec'] {
 
 /** Read the real quality of a downloaded file. Returns null if the file can't be parsed. */
 export function readFileQuality(filePath: string): AudioQuality | null {
+	return readFileDetails(filePath)?.quality ?? null
+}
+
+/** La calidad de un archivo y su duración (null si no la dice), leídas del archivo. Null si no se puede leer. */
+export function readFileDetails(filePath: string): { quality: AudioQuality; durationMs: number | null } | null {
 	try {
 		const file = File.createFromPath(filePath)
 		try {
@@ -41,13 +46,14 @@ export function readFileQuality(filePath: string): AudioQuality | null {
 			// Some containers (YouTube's DASH m4a) don't state a bitrate: derive the average from size and duration.
 			let bitrate = p?.audioBitrate || 0
 			if (!bitrate && p?.durationMilliseconds) bitrate = (fs.statSync(filePath).size * 8) / p.durationMilliseconds
-			return {
+			const quality: AudioQuality = {
 				codec,
 				lossless,
 				bitDepth: lossless && p?.bitsPerSample ? p.bitsPerSample : undefined,
 				sampleRateHz: p?.audioSampleRate || undefined,
 				bitrateKbps: bitrate ? Math.round(bitrate) : undefined
 			}
+			return { quality, durationMs: p?.durationMilliseconds || null }
 		} finally {
 			file.dispose()
 		}

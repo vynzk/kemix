@@ -31,13 +31,23 @@ import {
 	MatchLabel,
 	RemoveDownloadButton,
 	ServiceDot,
+	SpectrumButton,
 	StatusPill
 } from '../components/ui'
 import { PlayButton, usePlayer } from '../components/Player'
 import { Bpm, GetSongBpmCredit, Key } from '../components/Features'
 import { DownloadPicker, useDownloadChoice } from '../components/DownloadPicker'
 
-export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => void }) {
+export function PlaylistDetailView({
+	id,
+	onBack,
+	onSpectrum
+}: {
+	id: number
+	onBack: () => void
+	/** Abre Espectro con el archivo de una descarga. */
+	onSpectrum: (downloadId: number, title: string) => void
+}) {
 	const qc = useQueryClient()
 	const player = usePlayer()
 	const playlist = useQuery({ queryKey: ['playlist', id], queryFn: () => api.playlist(id) })
@@ -259,8 +269,8 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 								<th className="py-3 font-medium">Calidad</th>
 								<th className="py-3 font-medium">Estado</th>
 								<th className="py-3 pr-4 text-right font-medium">Dur.</th>
-								<th className="w-32 py-3 pr-8">
-									<span className="sr-only">Eliminar descarga</span>
+								<th className="w-44 py-3 pr-8">
+									<span className="sr-only">Espectro y eliminar descarga</span>
 								</th>
 							</tr>
 						</thead>
@@ -331,7 +341,10 @@ export function PlaylistDetailView({ id, onBack }: { id: number; onBack: () => v
 											)}
 										</td>
 										<td className="py-2 pr-4 text-right text-muted">{duration(t.durationMs)}</td>
-										<td className="w-32 py-2 pr-8 text-right">
+										<td className="w-44 py-2 pr-8 text-right whitespace-nowrap">
+											{t.download?.status === 'done' && (
+												<SpectrumButton onHover onClick={() => onSpectrum(t.download!.id, t.title)} />
+											)}
 											{t.download && (
 												<RemoveDownloadButton
 													onHover

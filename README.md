@@ -111,6 +111,22 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
     y volver a conectarse.
 
   Con Soulseek conectado, Buscar tiene además la pestaña **Soulseek** (ver más abajo).
+- **Espectro**: muestra el espectrograma de un archivo y dice si su calidad es la que declara. Sirve para pillar un WAV
+  o FLAC hecho desde un MP3, un «96 kHz» remuestreado desde un CD o un «24 bits» con relleno.
+  - Se abre arrastrando un archivo cualquiera del equipo a la pantalla «Espectro» (o con «Elegir archivo»), o con el
+    botón «Espectro» de un tema bajado, en su playlist o en Descargas. El archivo se analiza en tu equipo y no se
+    guarda en ningún lado.
+  - Kemix decodifica todo el tema con ffmpeg sin remuestrear ni mezclar canales y promedia su espectro
+    (`packages/core/src/spectrum.ts`). Busca la caída brusca más aguda (de al menos 15 dB en 1 kHz, que después sigue
+    abajo): es el filtro con que un códec con pérdida tira los agudos (LAME corta un MP3 de 128 kbps en unos 16–17 kHz,
+    uno de 320 en 20–20,5 kHz; Opus en 20 kHz). Sin una caída, mide hasta dónde hay audio sobre el ruido de fondo de un
+    CD.
+  - El veredicto compara eso con lo que dice el archivo: un sin pérdida con un corte bajo 20 kHz «probablemente viene
+    de un MP3» (o queda en duda si la caída es leve); uno cortado en 20–21 kHz puede venir de un MP3 de 320, un AAC o
+    un Opus; un MP3 que dice 320 kbps pero se corta como uno de 128 viene de uno peor. En archivos de más de 48 kHz
+    mira si hay algo sobre 22–24 kHz, y en los de 24 bits si los 8 bits de abajo están siempre en cero.
+  - El gráfico marca el corte medido y dónde cortan los formatos con pérdida más comunes; al pasar el puntero muestra
+    tiempo, frecuencia y nivel, y al costado está el nivel medio de cada frecuencia en todo el tema.
 - **Playlists de Kemix**: lo que bajas fuera de una playlist de un servicio queda en una playlist propia de Kemix
   («Temas sueltos», «Soulseek», «SoundCloud gratis»), con su carpeta y su `.m3u8`. Ningún servicio las sincroniza;
   un tema que ya estaba en otra playlist se reutiliza.
@@ -201,4 +217,7 @@ apps/desktop      Electron: arranca el server en 127.0.0.1 con un token por sesi
   empieza o se agota la espera. El servidor filtra algunas búsquedas (artistas con reclamos de derechos), que no dan
   resultados. Como Kemix no comparte archivos, algunos usuarios rechazan sus descargas. La calidad elegida al descargar
   no cambia el archivo: se elige al buscar, según la calidad por defecto de Ajustes.
+- Espectro: el veredicto es una pista, no una prueba. Algunos másters se cortan antes a propósito o casi no tienen
+  agudos, y hay códecs con pérdida que no cortan (algunos AAC de bitrate alto, un MP3 V0): esos salen como sin pérdida.
+  Un «alta resolución» hecho con un remuestreo que deja ecos sobre 22 kHz queda como dudoso y no como falso.
 - Descargar desde estos servicios va contra sus términos de uso; es para uso personal.

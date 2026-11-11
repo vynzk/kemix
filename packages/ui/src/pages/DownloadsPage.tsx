@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { SERVICE_LABEL, bytes, cx, qualityDetail, qualityLabel, qualityTone } from '../lib/format'
-import { Button, Empty, ErrorText, PageHeader, RemoveDownloadButton, StatusPill } from '../components/ui'
+import { Button, Empty, ErrorText, PageHeader, RemoveDownloadButton, SpectrumButton, StatusPill } from '../components/ui'
 
 const ACTIVE = ['queued', 'matching', 'downloading']
 
-export function DownloadsPage() {
+/** `onSpectrum`: abre Espectro con el archivo de una descarga. */
+export function DownloadsPage({ onSpectrum }: { onSpectrum: (downloadId: number, title: string) => void }) {
 	const qc = useQueryClient()
 	const downloads = useQuery({ queryKey: ['downloads'], queryFn: api.downloads })
 	const refresh = () => {
@@ -45,7 +46,7 @@ export function DownloadsPage() {
 						{rows.map((r) => {
 							const pct = r.totalBytes && r.bytes ? Math.min(100, Math.round((r.bytes / r.totalBytes) * 100)) : null
 							return (
-								<tr key={r.id} className="border-b border-line/60">
+								<tr key={r.id} className="group border-b border-line/60">
 									<td className="max-w-0 py-2.5 pr-4 pl-8">
 										<p className="truncate">{r.title}</p>
 										<p className="truncate text-xs text-muted">
@@ -82,7 +83,8 @@ export function DownloadsPage() {
 									<td className="w-24 py-2.5 pr-4 text-right">
 										<StatusPill status={r.status} />
 									</td>
-									<td className="w-32 py-2.5 pr-8 text-right">
+									<td className="w-44 py-2.5 pr-8 text-right whitespace-nowrap">
+										{r.status === 'done' && <SpectrumButton onHover onClick={() => onSpectrum(r.id, r.title)} />}
 										<RemoveDownloadButton
 											status={r.status}
 											pending={remove.isPending && remove.variables === r.id}

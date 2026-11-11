@@ -20,6 +20,7 @@ import type {
 	SoundeoStatus,
 	SourceService,
 	SourceTrack,
+	SpectrumAnalysis,
 	TrackFeatures,
 	TrackPreview,
 	YtMusicAccount
@@ -31,6 +32,16 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 		headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
 		body: body !== undefined ? JSON.stringify(body) : undefined
 	})
+	return parse<T>(res)
+}
+
+/** Sube un archivo tal cual (sin JSON): el servidor lo lee como stream. */
+async function upload<T>(url: string, file: File): Promise<T> {
+	const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
+	return parse<T>(res)
+}
+
+async function parse<T>(res: Response): Promise<T> {
 	const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null
 	if (!res.ok) throw new Error((data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`)
 	return data as T
@@ -173,5 +184,11 @@ export const api = {
 	retryFailed: () => request('POST', '/api/downloads/retry'),
 	clearFinished: () => request('POST', '/api/downloads/clear'),
 	/** Stops it if running, deletes its file from disk and removes it from the list. */
-	removeDownload: (id: number) => request('DELETE', `/api/downloads/${id}`)
+	removeDownload: (id: number) => request('DELETE', `/api/downloads/${id}`),
+
+	/** El espectro de un archivo del equipo (se manda al servidor de Kemix, que corre en el mismo equipo). */
+	spectrumOfFile: (file: File) =>
+		upload<SpectrumAnalysis>(`/api/spectrum/file?name=${encodeURIComponent(file.name)}`, file),
+	/** El espectro del archivo de una descarga terminada. */
+	spectrumOfDownload: (downloadId: number) => request<SpectrumAnalysis>('POST', `/api/downloads/${downloadId}/spectrum`)
 }

@@ -25,10 +25,13 @@ type DragData = { type: 'playlist'; playlist: PlaylistSummary } | { type: 'folde
 export function LibraryPage({
 	syncing,
 	onGoToAccounts,
+	onSpectrum,
 	initialPlaylist = null
 }: {
 	syncing: boolean
 	onGoToAccounts: () => void
+	/** Abre Espectro con el archivo de una descarga. */
+	onSpectrum: (downloadId: number, title: string) => void
 	initialPlaylist?: number | null
 }) {
 	const qc = useQueryClient()
@@ -80,7 +83,7 @@ export function LibraryPage({
 	}
 
 	if (openPlaylist !== null) {
-		return <PlaylistDetailView id={openPlaylist} onBack={() => setOpenPlaylist(null)} />
+		return <PlaylistDetailView id={openPlaylist} onBack={() => setOpenPlaylist(null)} onSpectrum={onSpectrum} />
 	}
 
 	const selectedFolder = selection.kind === 'folder' ? folders.find((f) => f.id === selection.id) : undefined

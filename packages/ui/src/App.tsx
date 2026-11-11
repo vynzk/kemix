@@ -11,8 +11,9 @@ import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SearchPage } from './pages/SearchPage'
 import { ExplorePage } from './pages/ExplorePage'
+import { SpectrumPage, type SpectrumSource } from './pages/SpectrumPage'
 
-type Page = 'library' | 'search' | 'explore' | 'review' | 'downloads' | 'accounts' | 'settings'
+type Page = 'library' | 'search' | 'explore' | 'review' | 'downloads' | 'spectrum' | 'accounts' | 'settings'
 
 export function App() {
 	const sync = useLiveEvents()
@@ -27,6 +28,12 @@ export function App() {
 	const [page, setPage] = useState<Page | null>(null)
 	// Bumped to reopen the library straight on a playlist (e.g. one just created from Buscar).
 	const [openPlaylist, setOpenPlaylist] = useState<{ id: number; nonce: number } | null>(null)
+	// Lo último que se miró en Espectro: queda al ir y volver.
+	const [spectrum, setSpectrum] = useState<SpectrumSource | null>(null)
+	const showSpectrum = (downloadId: number, title: string) => {
+		setSpectrum({ kind: 'download', id: downloadId, title })
+		setPage('spectrum')
+	}
 	// First run: nothing connected → start on Accounts.
 	const current: Page = page ?? (state.data && connected === 0 ? 'accounts' : 'library')
 
@@ -36,6 +43,7 @@ export function App() {
 		{ id: 'explore', label: 'Explorar' },
 		{ id: 'review', label: 'Revisión', badge: review.data?.length },
 		{ id: 'downloads', label: 'Descargas', badge: active || undefined },
+		{ id: 'spectrum', label: 'Espectro' },
 		{ id: 'accounts', label: 'Cuentas', alert: accountErrors > 0 },
 		{ id: 'settings', label: 'Ajustes' }
 	]
@@ -84,6 +92,7 @@ export function App() {
 							initialPlaylist={openPlaylist?.id ?? null}
 							syncing={sync.running}
 							onGoToAccounts={() => setPage('accounts')}
+							onSpectrum={showSpectrum}
 						/>
 					)}
 					{current === 'search' && (
@@ -104,7 +113,8 @@ export function App() {
 						/>
 					)}
 					{current === 'review' && <ReviewPage />}
-					{current === 'downloads' && <DownloadsPage />}
+					{current === 'downloads' && <DownloadsPage onSpectrum={showSpectrum} />}
+					{current === 'spectrum' && <SpectrumPage source={spectrum} onSource={setSpectrum} />}
 					{current === 'accounts' && <AccountsPage />}
 					{current === 'settings' && <SettingsPage />}
 				</main>

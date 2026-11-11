@@ -4,9 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { File } from 'node-taglib-sharp'
-import { Ffmpeg, ffmpegAsset, mp3Args, pcmArgs, pcmBitDepth, pcmDecodeArgs } from '../src/download/ffmpeg'
+import type { Db } from '../src/db'
+import { Ffmpeg, ffmpegAsset, mp3Args, pcmArgs, pcmBitDepth, pcmDecodeArgs, rawDecodeArgs } from '../src/download/ffmpeg'
 import { readFileQuality } from '../src/download/quality'
 import { readKeyBpm, writeKeyBpm, writeTags } from '../src/download/tagger'
+import { SpectrumAnalyzer } from '../src/spectrum'
 
 describe('ffmpegAsset', () => {
 	it('picks the static build for each platform', () => {
@@ -61,6 +63,16 @@ describe('pcmDecodeArgs', () => {
 		const args = pcmDecodeArgs('pipe:0', 11025)
 		expect(args).not.toContain('-nostdin')
 		expect(args.join(' ')).toContain('-i pipe:0')
+	})
+})
+
+describe('rawDecodeArgs', () => {
+	it('decodifica a un WAV de 32 bits por stdout, sin remuestrear ni mezclar canales', () => {
+		const args = rawDecodeArgs('in.flac')
+		expect(args.join(' ')).toContain('-i in.flac -map 0:a:0 -vn')
+		expect(args.join(' ')).toContain('-c:a pcm_s32le -f wav pipe:1')
+		expect(args).not.toContain('-ar')
+		expect(args).not.toContain('-ac')
 	})
 })
 
@@ -140,6 +152,41 @@ describe.skipIf(!hasFfmpeg)('converting with the installed ffmpeg', () => {
 			writeKeyBpm(file, { bpm: 127.6, key: 'F#m' })
 			expect(readKeyBpm(file)).toEqual({ bpm: 128, key: 'F#m' })
 		}
+	})
+
+	it('ve en el espectro un WAV hecho desde un MP3, un 96 kHz remuestreado y un 24 bits con relleno', async () => {
+		const ff = (...args: string[]) => {
+			const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { windowsHide: true })
+			expect(r.status, r.stderr?.toString()).toBe(0)
+		}
+		// Ruido rosa: tiene agudos hasta arriba, como un sin pérdida.
+		const pink = path.join(dir, 'rosa.wav')
+		ff('-f', 'lavfi', '-i', 'anoisesrc=color=pink:sample_rate=44100:duration=8:amplitude=0.3:seed=1', '-ac', '2', '-c:a', 'pcm_s16le', pink)
+		const mp3 = path.join(dir, 'rosa-128.mp3')
+		ff('-i', pink, '-c:a', 'libmp3lame', '-b:a', '128k', mp3)
+		const fromMp3 = path.join(dir, 'rosa-desde-mp3.wav')
+		ff('-i', mp3, '-c:a', 'pcm_s16le', fromMp3)
+		const upsampled = path.join(dir, 'rosa-96k.flac')
+		ff('-i', pink, '-ar', '96000', '-c:a', 'flac', '-sample_fmt', 's32', upsampled)
+		const padded = path.join(dir, 'rosa-24.flac')
+		ff('-i', pink, '-c:a', 'flac', '-sample_fmt', 's32', padded)
+
+		const spectrum = new SpectrumAnalyzer({} as Db, ffmpeg)
+		const real = await spectrum.analyzeFile(pink)
+		expect(real).toMatchObject({ sampleRateHz: 44_100, channels: 2, usedBits: 16, verdict: { level: 'ok' } })
+		expect(Math.abs(real.durationMs - 8000)).toBeLessThan(100)
+		const fake = await spectrum.analyzeFile(fromMp3)
+		expect(fake).toMatchObject({ sharpCutoff: true, verdict: { level: 'fake', title: 'Probablemente viene de un MP3' } })
+		expect(fake.cutoffHz).toBeGreaterThan(15_500)
+		expect(fake.cutoffHz).toBeLessThan(17_800)
+		// El MP3 mismo está bien: dice 128 kbps y se corta como uno de 128.
+		expect((await spectrum.analyzeFile(mp3)).verdict.level).toBe('ok')
+		const up = await spectrum.analyzeFile(upsampled)
+		expect(up.sampleRateHz).toBe(96_000)
+		expect(['doubt', 'fake']).toContain(up.verdict.level)
+		expect(up.verdict.title).toMatch(/remuestreado/)
+		expect(await spectrum.analyzeFile(padded)).toMatchObject({ usedBits: 16, verdict: { level: 'fake', title: 'Es de 16 bits con relleno' } })
+		await expect(spectrum.analyzeFile(path.join(dir, 'junk.flac'))).rejects.toThrow(/No se pudo leer el audio/)
 	})
 
 	it('reports a failed conversion', async () => {

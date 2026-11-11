@@ -27,12 +27,12 @@ Nada. El ejecutable ya trae todo lo que Kemix necesita para funcionar:
   se usa esa.
 - **Runtime de JavaScript para yt-dlp** (YouTube lo exige para resolver sus desafíos): Kemix le presta su propio
   ejecutable, que funciona como Node con `ELECTRON_RUN_AS_NODE`. No hace falta Deno ni Node.
-- **ffmpeg** (solo para convertir: a MP3 con «MP3 320 kbps», o a AIFF/WAV): Kemix baja su propia copia la primera vez
-  que tiene que convertir: un build estático fijo de los
+- **ffmpeg** (para convertir a MP3 con «MP3 320 kbps» o a AIFF/WAV, para analizar la clave y el BPM, y para el
+  Espectro): Kemix baja su propia copia la primera vez que lo necesita: un build estático fijo de los
   [releases de ffmpeg-static](https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1) (~30 MB), verificado
   con el SHA-256 fijado en `packages/core/src/download/ffmpeg.ts`, y la guarda en la misma carpeta `bin`. No se
   actualiza sola: para cambiar de versión, actualiza ahí la URL y los checksums. Si no puede bajarlo, usa el `ffmpeg`
-  del sistema si hay uno. Sin conversión no se usa: el audio se guarda tal cual llega.
+  del sistema si hay uno. Si no se usa para nada de eso, no se baja: el audio se guarda tal cual llega.
 
 Lo único que necesita es conexión a internet la primera vez que baja algo de YouTube o convierte un formato.
 

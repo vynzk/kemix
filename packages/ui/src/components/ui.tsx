@@ -157,6 +157,22 @@ export function RemoveDownloadButton({
 	)
 }
 
+/** Abre Espectro con el archivo de una descarga. `onHover`: como «Eliminar», aparece al pasar por la fila. */
+export function SpectrumButton({ onClick, onHover }: { onClick: () => void; onHover?: boolean }) {
+	return (
+		<button
+			title="Mira su espectro: si la calidad del archivo es la que dice"
+			onClick={onClick}
+			className={cx(
+				'rounded px-1.5 py-0.5 text-xs whitespace-nowrap text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100',
+				onHover && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+			)}
+		>
+			Espectro
+		</button>
+	)
+}
+
 const MATCH_LABEL: Record<MatchStatus, string> = {
 	auto: 'Auto',
 	accepted: 'Elegido',
